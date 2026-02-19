@@ -1,0 +1,63 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# ECG Reporsitory
+ECG_repo/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# mypy
+.mypy_cache/
+
+# --------------------
+# Project-specific
+# --------------------
+
+# Experiments (trained models, logs, predictions); keep folder via experiments/.gitkeep
+experiments/*
+!experiments/.gitkeep
+
+# Data (large files)
+data/*.tar.gz
+data/*.zip
+notebooks/*.tar.gz
+notebooks/*.csv
+
+# OS
+.DS_Store
+Thumbs.db
