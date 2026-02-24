@@ -10,9 +10,6 @@ venv/
 ENV/
 env/
 
-# ECG Reporsitory
-ECG_repo/
-
 # IDE
 .idea/
 .vscode/
@@ -48,15 +45,26 @@ htmlcov/
 # Project-specific
 # --------------------
 
-# Experiments (trained models, logs, predictions); keep folder via experiments/.gitkeep
+# Reference / external repos (optional)
+ECG_repo/
+
+# Experiments (trained models, logs, predictions)
 experiments/*
 !experiments/.gitkeep
 
-# Data (large files)
+# Data — large files and datasets (do not commit)
 data/*.tar.gz
 data/*.zip
 notebooks/*.tar.gz
 notebooks/*.csv
+
+# PCam: downloaded archives and extracted HDF5
+pcamv1/
+pcam_data/
+
+# Other data mirrors (if used)
+physionet_data/training/
+training/
 
 # OS
 .DS_Store
