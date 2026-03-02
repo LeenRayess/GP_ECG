@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "data_dir": "C:\\GP_ECG\\pcam_data",
+  "out_dir": "C:\\GP_ECG\\pcam_dedup",
+  "chunk_size": 2000,
+  "splits": {
+    "train": {
+      "n_original": 262144,
+      "n_kept": 220025,
+      "n_removed": 42119,
+      "indices_file": "train_kept_indices.npy"
+    },
+    "valid": {
+      "n_original": 32768,
+      "n_kept": 28108,
+      "n_removed": 4660,
+      "indices_file": "valid_kept_indices.npy"
+    },
+    "test": {
+      "n_original": 32768,
+      "n_kept": 29383,
+      "n_removed": 3385,
+      "indices_file": "test_kept_indices.npy"
+    }
+  }
+}
