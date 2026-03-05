@@ -60,7 +60,7 @@ namex==0.1.0
 nest-asyncio==1.6.0
 networkx==3.4.2
 numba==0.60.0
-numpy==2.0.2
+numpy>=1.24,<2  # PyTorch 2.3 / timm need NumPy 1.x
 opt_einsum==3.4.0
 optree==0.18.0
 packaging==26.0

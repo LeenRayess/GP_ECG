@@ -5,7 +5,7 @@
 ---
 
 ## 1. Project context and goal
-
+gvb
 - **Project:** Histopathology (PatchCamelyon first; CAMELYON17 later) for metastasis detection.
 - **Phased plan:** (1) Define task and metrics → (2) Data setup and baseline on PCam → (3) Augmentation, domain robustness, uncertainty, explainability → (4) Then move to CAMELYON17 for external validation.
 - **Current focus:** PCam baseline established; deduplication done; data quality tracked; next steps are training on dedup data, stain robustness, and transfer learning (Virchow2).
@@ -132,7 +132,21 @@ python scripts/dedup_pcam.py --out-dir pcam_dedup --verify
 
 ---
 
-## 6. Next steps (for discussion)
+## 6. Preprocessing pipeline (generalizable, “any dataset / any stain”)
+
+**Supervisor requirement:** The **model + preprocessing** should be generalizable — we standardize every image to a **chosen standard** so the pipeline works on any dataset and any stain, not just the model alone.
+
+**Proposed pipeline (see `docs/preprocessing_pipeline_design.md` for full detail):**
+
+1. **Stain normalization:** Map each image to a **fixed reference stain** (e.g. Macenko, with Reinhard fallback if estimation fails). Adaptive per image → “any stain” becomes our standard.
+2. **Resolution/size:** Standard resolution (e.g. 0.5 µm/px) + fixed input size (96×96 or 224×224). Use metadata (MPP) when available, else default. → “any image” same scale and grid.
+3. **Value normalization:** Fixed range (e.g. [0, 1] or reference mean/std). → “any dataset” same value distribution.
+
+**Innovation angles:** Robust reference (multiple patches), automatic fallback (Macenko → Reinhard), one pipeline for PCam and CAMELYON17, resolution-aware deployment when MPP exists. Current code: `src/preprocess.py` (Macenko, quality filters); pipeline will be extended to match this design and to save/ship the reference so deployment uses the same standard.
+
+---
+
+## 7. Next steps (for discussion)
 
 1. **Baseline on dedup data:** Train the same CNN using `*_kept_indices.npy`; report val/test AUC and accuracy and compare to “baseline with duplicates.”
 2. **Stain robustness:** Prefer **stain augmentation** (and optionally normalisation as one augmentation) so the model is stain-invariant rather than tied to one normaliser; goal: “any stain in the future.”
@@ -142,7 +156,7 @@ python scripts/dedup_pcam.py --out-dir pcam_dedup --verify
 
 ---
 
-## 7. Short “elevator” summary
+## 8. Short “elevator” summary
 
 - **Baseline:** Simple CNN on PCam, official splits; val AUC ~0.93, test AUC ~0.88; metrics and confusion matrices saved.
 - **Dedup:** Hash-based (SHA-256) exact duplicate removal; output = manifest + kept indices per split; verification step ensures no non-duplicate removed and counts consistent.
