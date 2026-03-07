@@ -107,7 +107,38 @@ In H&E, **colour carries meaning**. Purple/blue = hematoxylin (nuclei, some stru
 - **Fallbacks:**  
   - If stain estimation fails (e.g. matrix singular, too few pixels): use **Reinhard** (global color match) or **per-image percentile/contrast stretch** so we still feed a consistent value range.  
   - Optional: **quality gate** before stain norm (e.g. “skip stain norm if tissue % &lt; X or blur &gt; Y”) and flag for exclusion or use fallback.  
-- **Reference choice:** Use one or several **good** patches (enough tissue, clear stain). Optionally average stain matrices from multiple reference patches to get a **robust reference** (innovation angle).
+- **Reference choice:** Use one or several **good** patches (enough tissue, clear stain). Optionally average stain matrices from multiple reference patches to get a **robust reference** (innovation angle). See below for how to pick them.
+
+### 3.5 Picking reference patch(es): how and based on what
+
+Stain normalization (Macenko, Vahadane, Reinhard) maps every image to a **reference** stain. The reference defines the “target” look (purple and pink shades). Picking a good reference is the first step.
+
+**What we need from a reference patch**
+
+1. **Enough tissue** — The patch must have a sufficient amount of stained tissue (not mostly white background or empty). Methods like Macenko estimate two stain vectors from the pixel distribution in optical density (OD) space; if most pixels are background or there is too little variation, the stain matrix is **degenerate or unstable** (e.g. singular, or both vectors point in the same direction). So we exclude patches that are solid-color, very low tissue %, or mostly white/black.
+2. **Representative staining** — The reference should look like “typical” H&E: visible purple/blue (hematoxylin) and pink/red (eosin). We do **not** want an outlier: e.g. an unusually pale slide, a heavily faded one, or a slide with dominant single stain. Normalizing everyone to an outlier would push the whole dataset toward that look. So the reference should be **in the middle** of the staining distribution (or from a chosen “gold standard” slide).
+3. **Technically valid** — For Macenko/Vahadane we need a patch on which the method **succeeds** (non-singular stain matrix, reasonable stain vectors). So after candidate selection we can **try** fitting the normalizer on each candidate and keep one that doesn’t fail.
+
+**How to pick (practical steps)**
+
+- **Step 1 — Filter by quality:** From your dataset (e.g. PCam train), exclude patches that we would anyway drop: solid-color (very low gray std), very high black/white ratio, very low tissue % (e.g. below our combined threshold 0.35). What remains are patches with enough content and variation.
+- **Step 2 — Avoid extremes:** Optionally exclude patches that are **stain outliers**. For example, compute a simple stain proxy per patch (e.g. mean R, G, B, or mean H and E from a simple color-deconvolution), then drop patches in the bottom/top 5–10% of those stats so the reference isn’t the palest or darkest. Alternatively, pick a patch whose stain stats are near the **median** of the dataset.
+- **Step 3 — Choose one or a few:**  
+  - **Single reference:** Pick one patch (e.g. the one at the median of tissue % and median intensity, or the first valid patch after filtering). Fit Macenko (and save the reference stain matrix) on that patch. Simple and reproducible.  
+  - **Multiple references (robust):** Pick a small set of patches (e.g. 5–20) from different slides or different parts of the dataset. Fit the normalizer on each, then **average** the reference stain matrices (or take the median per matrix element), or fit once on the **concatenation** of all reference patches. The result is a single “average” reference that is less sensitive to one bad patch.
+- **Step 4 — Validate:** Run Macenko (and Reinhard if used) on the chosen reference patch; ensure it doesn’t fail. Optionally apply the fitted normalizer to a few other patches and visually check that normalized images look plausible (no strong color cast or collapse).
+
+**Criteria summary**
+
+| Criterion | Why |
+|-----------|-----|
+| High enough tissue % (e.g. above 0.35) | So there are enough stained pixels to estimate stain vectors; avoids degenerate matrices. |
+| Not solid-color (gray std above threshold) | Same reason; need variation. |
+| Not mostly white or black | White/black don’t carry stain information. |
+| Representative / median-like stain | So we normalize toward “typical” H&E, not an outlier. |
+| Macenko (or chosen method) succeeds on it | So the reference is technically usable. |
+
+**For PCam specifically:** Use the same quality filters we defined (solid-color, high black, low tissue combined). From the remaining patches, pick one (or several) with tissue % in the middle range and, if available, median-like RGB or H/E stats; or pick at random among the filtered set and validate that Macenko fits. Save the chosen reference patch index (or the fitted normalizer / reference matrix) so the pipeline is reproducible.
 
 ---
 
@@ -218,7 +249,7 @@ To make the pipeline robust to “any” real-world dataset:
 
 - **Before** or **after** stain/size/value:  
   - **Blur / focus:** Flag or exclude very blurry patches (e.g. Laplacian variance below threshold).  
-  - **Tissue content:** Flag or exclude patches with very little tissue. **Pipeline order:** (1) Remove **solid-color** patches first. (2) Then apply **high white / high black ratio** with a tighter threshold. **Smarter option:** **Otsu-based tissue %** (see below).  
+  - **Tissue content:** Flag or exclude patches with very little tissue. **Pipeline order:** (1) Remove **solid-color** patches first. (2) Then apply **high black** (pure black patches). (3) **Low tissue** is determined by our **chosen mix** (saturation OR local variance, with contrast-normalized Otsu on edge cases); we **settled on threshold 0.35** (see below).  
   - **Artifacts:** Folds, pen marks, bubbles — optionally detect and mask or exclude.  
 - These steps are **adaptive** (per image) and **optional** (can be turned on for training and deployment so both see the same rules).
 
@@ -263,6 +294,19 @@ Goal: estimate “how much of this patch is tissue” in a way that doesn’t de
 
 - **Implementation note:** For the mix, compute per patch: `tissue_pct_sat` (fraction of pixels with S > threshold), `tissue_pct_var` (fraction of pixels with local variance > threshold or above patch percentile). Then e.g. **tissue_pct = max(tissue_pct_sat, tissue_pct_var)** or **tissue_pct = fraction of pixels where (saturated OR high_variance)**. The “OR” version is slightly more conservative (avoids double-counting the same pixel in two different ways) and is the one recommended above.
 
+
+### Chosen method and threshold (what we use)
+
+We **use the mix** and have **settled on threshold 0.35** for low-tissue removal.
+
+**Mix of methods:**
+(1) **Saturation** — fraction of pixels with HSV saturation above a low threshold (e.g. S > 0.12); catches colored (tissue) vs white/gray (background).
+(2) **Local variance** — fraction of pixels whose local variance (e.g. 11×11 window) is above a threshold (e.g. 0.003); catches texture (tissue) vs flat (background).
+(3) **Combined:** a pixel counts as "tissue" if **either** condition holds; **tissue % final** = fraction of such pixels in the patch.
+(4) **Edge cases:** when this combined % falls in a middle range (e.g. 0.12–0.45), we also compute **contrast-normalized Otsu** (5th–95th percentile stretch, then Otsu; tissue = fraction below threshold) and take the **max** of combined and Otsu-norm, so borderline patches are not undercounted.
+
+**Threshold:** We **remove** a patch if **tissue % final < 0.35**. This value was chosen to include more borderline low-tissue patches (relaxed from 0.20); it is a general default, not fit to PCam labels. See "Does this work for other datasets?" below.
+
 ### Otsu and “adaptiveness” (plain language)
 
 - **What Otsu does:** It looks at the **histogram** of brightness in the patch (how many pixels are dark, how many medium, how many bright) and finds a **single cutoff** that best splits the image into “two groups”—e.g. “dark stuff” vs “bright stuff.” It doesn’t use a fixed rule like “everything darker than 0.5 is tissue”; it asks “where does *this* image naturally divide?” So a pale slide and a dark slide each get their own cutoff. That’s what we mean by **adaptive**: the rule adjusts to each image.
@@ -273,6 +317,8 @@ Goal: estimate “how much of this patch is tissue” in a way that doesn’t de
 - **Solid-color filter (low gray std):** **General.** Any digital image can have “almost no variation” (solid or near-solid). The threshold (e.g. std &lt; 0.04 on [0,1]) is a **generic** “no texture” criterion; it doesn’t assume PCam resolution or stain. It works for other histology datasets, other modalities, and other image sizes as long as the same rule is applied.
 - **High white / high black ratio:** **General.** “Fraction of pixels very bright or very dark” is a simple, dataset-agnostic rule. The exact thresholds (e.g. 0.75) can be tuned per use case but the *idea* (exclude mostly white or mostly black patches) applies to any dataset.
 - **Otsu-based tissue %:** **General in method, H&E-biased in interpretation.** The **algorithm** (Otsu threshold on grayscale, then “tissue % = fraction on the dark side”) is not PCam-specific—it runs on any image. The **meaning** “dark = tissue, bright = background” is a **convention** that fits H&E (and many bright-field histology slides). For other H&E or similar datasets it transfers directly. For other modalities (e.g. fluorescence, IHC with different contrast), “tissue” might need a different rule (e.g. “above threshold” instead of “below,” or a different channel). So: **same pipeline step works on other datasets**; only the *interpretation* of which side is “tissue” may need to be checked for non–H&E-like images. We are **not** tying the logic to PCam patch size, scanner, or labels—no PCam-specific parameters.
+
+- **Low-tissue threshold (e.g. 0.35):** **General as a default.** The value (e.g. “remove if tissue % final &lt; 0.35”) is a **semantic** choice: “how little tissue is too little?” It was **not** fit to PCam labels or task performance—we only relaxed from 0.20 to 0.35 to include more borderline cases. So it is **not** a PCam-tuned parameter. The same cutoff can be used as a **reasonable default** for other H&E (or similar) datasets: patches with &lt; 35% tissue-like pixels are excluded. If a new dataset has a very different distribution (e.g. much paler slides), you can tune within a range (e.g. 0.25–0.40) without changing the pipeline; the **logic** (saturation OR variance, Otsu on edge cases) remains general.
 
 ---
 
