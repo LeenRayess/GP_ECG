@@ -87,7 +87,7 @@ Other methods (Vahadane, SPCN) exist; we use only Macenko + Reinhard.
 We choose **per patch**:
 
 - **blue_dom_pct** = fraction of pixels where blue > red (simple proxy for “how blue-dominated”).
-- Compute the **25th percentile** of blue_dom_pct on a sample of the dataset → **threshold**.
+- For **each split** (train, valid, test), we compute the **25th percentile** of blue_dom_pct on a sample of **that split** → **threshold for that split** (generalizable: test/valid get their own threshold).
 - If **blue_dom_pct < threshold** → use **Reinhard** (patch is H-heavy / low eosin; Macenko often fails or gives poor results).
 - Else → use **Macenko**.
 
@@ -102,6 +102,38 @@ If **both** Macenko and Reinhard fail (e.g. empty tissue mask, zero variance), w
 
 - **Fallback order:** Try chosen method (Macenko or Reinhard by rule) → on exception (e.g. `TissueMaskException`, `LinAlgError`), try the other → if both fail, use luminosity-only and record index.
 - **Contrast stretch** is used only for **display** of normalized images; the stored/used standard is the normalizer output (optionally after value normalization to [0,1]).
+
+### 4.5 Per-patch normalizer tracking and purple (percentile-based) replacement
+
+**Percentile-based purple detection (generalizable):** We do **not** use fixed thresholds (e.g. mean R &lt; 0.2). For each split we compute the **PURPLE_PERCENTILE** (e.g. 2nd) of **mean_r** and of **pink_pct** over that split's normalized patches. Any patch with mean_r ≤ that percentile or pink_pct ≤ that percentile is replaced with **luminosity-only** normalization and its output index is saved. So each split (train, valid, test) gets its own thresholds from its own distribution; the test set's worst tail is replaced the same way, which helps keep distance to reference and color consistency comparable across splits.
+
+The preprocessing script writes **`<split>_normalizer_used.npy`** (e.g. `train_normalizer_used.npy`) in the preprocessed dir. Each element is a **uint8** code for that output patch:
+
+| Code | Meaning |
+|------|--------|
+| 0 | Macenko (chosen first, succeeded) |
+| 1 | Reinhard (chosen first, succeeded) |
+| 2 | Macenko_fallback (Reinhard tried first, failed; Macenko succeeded) |
+| 3 | Reinhard_fallback (Macenko tried first, failed; Reinhard succeeded) |
+| 4 | luminosity_only (replaced by percentile-based purple rule) |
+
+**Index alignment:** Position `pos` in the array corresponds to the same patch as `preprocessed/<split>_x.h5` at index `pos`. The file **`<split>_purple_fallback.npy`** lists the **output indices** of patches that were replaced with luminosity-only (all have code 4 in `normalizer_used`).
+
+**Example: count normalizers and purple-fallback size**
+
+```python
+import numpy as np
+
+preproc_dir = "pcam_data/preprocessed"
+split = "train"
+norm_used = np.load(f"{preproc_dir}/{split}_normalizer_used.npy")  # shape (n_kept,)
+purple_positions = np.load(f"{preproc_dir}/{split}_purple_fallback.npy")  # output indices replaced by percentile rule
+
+names = ["Macenko", "Reinhard", "Macenko_fallback", "Reinhard_fallback", "luminosity_only"]
+for i, name in enumerate(names):
+    print(f"  {name}: {(norm_used == i).sum()}")
+print(f"  Purple-fallback count (code 4): {len(purple_positions)}")
+```
 
 ---
 
