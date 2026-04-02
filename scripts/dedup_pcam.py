@@ -1,23 +1,7 @@
-"""
-Deduplicate PCam: keep one patch per duplicate group (hash-based).
+"""PCam deduplication by SHA-256 of raw patch bytes; one index kept per identical group.
 
-Default output (manifest + indices only):
-  - manifest.json: data_dir, per-split counts (original, n_kept, n_removed), index file names.
-  - Per split: {split}_kept_indices.npy — indices into the original x/y arrays. Use these in
-    training (e.g. load data, then index with kept_indices). No .h5 files written by default.
-
-Optional --write-h5: also write new .h5/.csv in loader layout so load_data(dedup_dir) works.
-
-Duplicate definition: SHA-256 of raw patch bytes. Two patches are duplicates only if they are
-byte-identical (no fuzzy matching). Hash collisions are negligible, so "duplicate" = true duplicate.
-
-Verification: run with --verify after dedup to confirm (1) no non-duplicate was removed and
-(2) all duplicates were removed: re-hashes kept indices and checks no duplicate hashes among them,
-and that n_original = n_kept + n_removed.
-
-Run from project root:
-  python scripts/dedup_pcam.py --data-dir pcam_data --out-dir pcam_dedup
-  python scripts/dedup_pcam.py --out-dir pcam_dedup --verify
+Writes manifest.json and {train,valid,test}_kept_indices.npy unless --write-h5 is used to emit a
+loader-compatible tree. Use --verify to re-hash kept indices and check counts against the manifest.
 """
 from __future__ import annotations
 
@@ -31,7 +15,6 @@ from collections import defaultdict
 
 import numpy as np
 
-# Project root = parent of scripts/
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 PCAM_MASTER = PROJECT_ROOT / "pcam-master"
@@ -124,12 +107,7 @@ def run_dedup(data_dir: Path, chunk_size: int = CHUNK_SIZE):
 
 
 def verify_dedup(out_dir: Path, chunk_size: int = CHUNK_SIZE) -> bool:
-    """
-    Verify dedup results: load manifest and kept indices, re-hash kept patches only, assert
-    (1) no duplicate hashes among kept (so no non-duplicate was removed and we didn't keep two copies),
-    (2) n_original == n_kept + n_removed from manifest.
-    Returns True if all checks pass.
-    """
+    """Re-hash kept indices; require unique hashes and manifest count consistency."""
     out_dir = Path(out_dir)
     manifest_path = out_dir / "manifest.json"
     if not manifest_path.exists():
@@ -193,12 +171,9 @@ def verify_dedup(out_dir: Path, chunk_size: int = CHUNK_SIZE) -> bool:
 
 
 def write_h5_layout(out_dir: Path, splits_data: dict, kept_per_split: dict):
-    """
-    Write new .h5 and .csv in the same layout as pcam_data so load_data(out_dir) works.
-    """
+    """Emit .h5/.csv compatible with keras_pcam load_data(out_dir)."""
     import h5py
 
-    # Same subdir and file names as loader expects
     layout = [
         ("train", "training", "camelyonpatch_level_2_split_train"),
         ("valid", "val", "camelyonpatch_level_2_split_valid"),
@@ -212,7 +187,6 @@ def write_h5_layout(out_dir: Path, splits_data: dict, kept_per_split: dict):
         out_sub = out_dir / subdir
         out_sub.mkdir(parents=True, exist_ok=True)
 
-        # Sample shape
         sample_x = np.asarray(x_ds[indices[0]])
         sample_y = np.asarray(y_ds[indices[0]])
         if hasattr(sample_y, "shape") and sample_y.shape:
@@ -267,11 +241,9 @@ def main():
     print("Deduplicating PCam (hash-based, keep one per duplicate group)...")
     splits_data, kept = run_dedup(args.data_dir, chunk_size=args.chunk_size)
 
-    # Save indices
     for split in ("train", "valid", "test"):
         np.save(args.out_dir / f"{split}_kept_indices.npy", kept[split])
 
-    # Manifest
     manifest = {
         "version": 1,
         "data_dir": str(args.data_dir.resolve()),

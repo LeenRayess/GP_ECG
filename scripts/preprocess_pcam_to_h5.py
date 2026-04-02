@@ -1,34 +1,8 @@
-"""
-Preprocess PCam with our full pipeline and write new HDF5 files.
+"""PCam preprocessing: quality filter, Macenko/Reinhard (plus fallbacks), scale to [0,1], write H5.
 
-Pipeline (per patch):
-  1. Quality filter: exclude solid-color, high black, low tissue (combined mix, threshold 0.35).
-  2. Stain normalization: Macenko or Reinhard by blue_dom_pct (fallback to other, then luminosity-only).
-  3. Value normalization: [0, 1].
-
-Patches are stored at 96x96. Resize to 224x224 (e.g. for Virchow2) in the data loader at train time.
-
-Input: data_dir (original PCam with training/, val/, test/ and .h5 files).
-       If --dedup-dir is set, only patches in {split}_kept_indices.npy are considered (preprocess runs on
-       the deduplicated set). Run scripts/dedup_pcam.py with --out-dir pcam_dedup first, then pass
-       --dedup-dir pcam_dedup (or leave default).
-
-Requires: experiments/stain_reference/stain_reference.json
-
-blue_dom threshold is computed per split (25th percentile of blue_dom_pct on that split) for generalizability.
-
-Output: data_dir/<preprocessed_subdir>/  (default: preprocessed; use e.g. preprocessed_multi_ref to compare runs)
-  train_x.h5, train_y.h5, valid_x.h5, valid_y.h5, test_x.h5, test_y.h5  (datasets "x", "y")
-  train_normalizer_used.npy, valid_normalizer_used.npy, test_normalizer_used.npy  (uint8: 0=Macenko, 1=Reinhard, 2=Macenko_fallback, 3=Reinhard_fallback, 4=luminosity_only; one value per output patch)
-  train_purple_fallback.npy, valid_purple_fallback.npy, test_purple_fallback.npy  (int64: output indices of patches that went all-purple after Macenko/Reinhard and were replaced by luminosity-only)
-  manifest.json  (kept_indices per split, counts, config)
-
-How to load preprocessed data:
-  import h5py
-  with h5py.File("pcam_data/preprocessed/train_x.h5", "r") as f:
-      x = f["x"]   # shape (n_kept, 96, 96, 3), float32 in [0,1]
-  For Virchow2 (224x224), resize in the data loader (e.g. bicubic) when batching.
-"""
+Reads original PCam layout under data_dir; optional --dedup-dir restricts to dedup_pcam kept indices.
+Needs experiments/stain_reference/stain_reference.json. Outputs under data_dir/<preprocessed_subdir>/:
+*_x.h5, *_y.h5, *_normalizer_used.npy, *_purple_fallback.npy, *_qa_samples.npz, manifest.json."""
 
 from __future__ import print_function
 
@@ -41,32 +15,25 @@ import numpy as np
 import h5py
 from scipy.ndimage import uniform_filter
 
-# Optional progress bar
 try:
     from tqdm import tqdm
 except ImportError:
     def tqdm(x, desc=None, **kwargs):
         return x
 
-# Project and pcam paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "pcam-master"))
 
-# Quality thresholds (from preprocessing_pipeline_design.md)
 SOLID_COLOR_STD = 0.04
 HIGH_BLACK_RATIO = 0.5
 LOW_TISSUE_THRESHOLD = 0.35
-# Purple detection: percentile-based (generalizable per split). Replace bottom PURPLE_PERCENTILE% by mean_r or pink_pct with luminosity-only.
-PURPLE_PERCENTILE = 2.0  # e.g. 2 = worst 2% of split
-# Macenko vs Reinhard: percentile-based per split. Patches with blue_dom_pct below this percentile (of the split) use Reinhard.
-BLUE_DOM_PERCENTILE = 25.0  # e.g. 25 = bottom 25% of split use Reinhard
-# Post-normalization guardrails: if stain output is implausible, replace with luminosity-only.
+PURPLE_PERCENTILE = 2.0
+BLUE_DOM_PERCENTILE = 25.0
 GUARDRAIL_MEAN_R_MIN = 0.08
 GUARDRAIL_PINK_PCT_MIN = 0.01
 GUARDRAIL_MEAN_SAT_MIN = 0.03
-# QA controls
 QA_SAMPLES_PER_SPLIT = 60
 CLASS_BALANCE_ALERT_ABS_DIFF = 0.03
 SAT_THRESHOLD = 0.12
@@ -74,13 +41,10 @@ VAR_THRESHOLD = 0.003
 EDGE_LO, EDGE_HI = 0.12, 0.45
 LOCAL_VAR_WIN = 11
 
-# Chunk size for reading/writing
 CHUNK_SIZE = 5000
 
-# Multi-reference stain mode (optional): three fixed train indices; KMeans k=4 on train features;
-# the cluster closest to MERGE_PATCH_IDX is routed to closest of the three refs by mean RGB (hue alignment).
 MULTI_REF_INDICES = [237219, 240880, 162772]
-MULTI_REF_MERGE_PATCH_IDX = 137467  # old "cluster 4" reference — not used as ref; its cluster → closest of MULTI_REF_INDICES
+MULTI_REF_MERGE_PATCH_IDX = 137467
 MULTI_REF_K_CLUSTERS = 4
 MULTI_REF_FIT_SAMPLE = 20000
 
@@ -152,7 +116,7 @@ def passes_quality(patch_01):
 
 
 def _routing_feature_row(p01):
-    """7-D feature vector for KMeans routing (aligned with multi_reference_investigation notebook)."""
+    """Seven features for KMeans multi-reference routing."""
     m = p01.mean(axis=(0, 1)).astype(np.float64)
     tissue = tissue_pct_final(p01)
     blue_dom = float((p01[:, :, 2] > p01[:, :, 0]).mean())
@@ -187,8 +151,6 @@ def _mean_saturation(patch_01):
     """Mean HSV-like saturation in [0,1] for guardrail checks."""
     mx = patch_01.max(axis=2)
     mn = patch_01.min(axis=2)
-    # np.where evaluates both branches everywhere -> divide warnings on mx≈0.
-    # np.divide(..., where=) only divides where safe.
     sat = np.zeros_like(mx, dtype=np.float64)
     valid = (mx > 1e-8) & np.isfinite(mx)
     np.divide(mx - mn, mx, out=sat, where=valid)
@@ -217,7 +179,7 @@ def _luminosity_only_norm(patch_01, luminosity_standardizer):
 
 
 def compute_blue_dom_threshold(x_path, kept_indices, percentile=25.0):
-    """Compute blue_dom threshold as percentile of blue_dom_pct over a sample of patches (per-split, generalizable)."""
+    """Per-split percentile of (B>R) fraction for Macenko vs Reinhard routing."""
     kept = np.asarray(kept_indices)
     n_kept = len(kept)
     n_sample = min(30000, n_kept)
@@ -227,7 +189,6 @@ def compute_blue_dom_threshold(x_path, kept_indices, percentile=25.0):
     for start in range(0, len(indices_to_sample), CHUNK_SIZE):
         end = min(start + CHUNK_SIZE, len(indices_to_sample))
         batch_idx = np.asarray(indices_to_sample[start:end])
-        # h5py requires increasing index order for fancy indexing
         order = np.argsort(batch_idx, kind="mergesort")
         sorted_idx = batch_idx[order]
         with h5py.File(x_path, "r") as f:
@@ -243,7 +204,7 @@ def compute_blue_dom_threshold(x_path, kept_indices, percentile=25.0):
 
 
 def get_normalizers_and_threshold(data_dir, train_x_path, ref_config_path, train_candidate_indices=None):
-    """Load reference patch from train H5, fit Macenko and Reinhard. blue_dom threshold is computed per-split in process_split."""
+    """Fit Macenko/Reinhard from stain_reference.json index on train H5."""
     from staintools import StainNormalizer, ReinhardColorNormalizer
     from staintools.preprocessing.luminosity_standardizer import LuminosityStandardizer
 
@@ -251,7 +212,6 @@ def get_normalizers_and_threshold(data_dir, train_x_path, ref_config_path, train
         ref_config = json.load(f)
     ref_idx = ref_config["reference_train_index"]
 
-    # Load reference patch from train H5
     with h5py.File(train_x_path, "r") as f:
         ref_patch = np.array(f["x"][ref_idx])
     ref_01 = to_01(ref_patch)
@@ -289,8 +249,7 @@ def build_ref_packs(train_x_path, ref_indices):
 
 
 def fit_multi_ref_router(train_x_path, train_candidate_indices=None):
-    """KMeans(k=4) on quality-passed train sample; merge cluster = closest to MULTI_REF_MERGE_PATCH_IDX in feature space;
-    other three clusters assigned to ref packs 0..2 via Hungarian match to the three reference feature vectors."""
+    """KMeans(4) on train features; merge cluster maps to nearest ref by RGB; others via Hungarian assignment."""
     from sklearn.cluster import KMeans
     from sklearn.preprocessing import StandardScaler
     from scipy.optimize import linear_sum_assignment
@@ -371,12 +330,11 @@ def choose_ref_pack_index(p01, router, ref_packs):
     return int(router["cluster_to_pack"][cl])
 
 
-# Normalizer method codes for per-patch tracking (saved as *_normalizer_used.npy)
 NORM_MACENKO = 0
 NORM_REINHARD = 1
-NORM_MACENKO_FALLBACK = 2   # Reinhard tried first, failed; Macenko succeeded
-NORM_REINHARD_FALLBACK = 3  # Macenko tried first, failed; Reinhard succeeded
-NORM_LUMINOSITY_ONLY = 4    # Both failed
+NORM_MACENKO_FALLBACK = 2
+NORM_REINHARD_FALLBACK = 3
+NORM_LUMINOSITY_ONLY = 4
 
 def normalize_patch(patch_01, macenko, reinhard, blue_dom_threshold, luminosity_standardizer, return_after_stain=False, return_which_normalizer=False):
     """Stain normalize then value norm to [0,1]. Returns float32 (96,96,3).
@@ -401,7 +359,6 @@ def normalize_patch(patch_01, macenko, reinhard, blue_dom_threshold, luminosity_
             norm_u8 = pstd
             which = NORM_LUMINOSITY_ONLY
     out = np.clip(norm_u8.astype(np.float32) / 255.0, 0.0, 1.0)
-    # Guardrail fallback: catch bad-looking outputs even when transform didn't raise an exception.
     if which != NORM_LUMINOSITY_ONLY and _fails_post_norm_guardrails(out):
         out = _luminosity_only_norm(patch_01, luminosity_standardizer)
         norm_u8 = np.clip((out * 255.0), 0, 255).astype(np.uint8)
@@ -496,7 +453,6 @@ def print_preprocess_status(out_dir):
                     n_y = f["y"].shape[0]
             except Exception as e:
                 print("[{}] {} exists but error reading: {}".format(split, y_path, e))
-        # Decide state
         step1_done = has_ckpt and n_kept_expected is not None
         output_ok = (n_x is not None and n_y is not None and n_x == n_y and
                      (n_kept_expected is None or n_x == n_kept_expected))
@@ -539,11 +495,7 @@ def print_preprocess_status(out_dir):
 
 def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_mean_rgb, candidate_indices=None, resume=False,
                    stain_router=None, ref_packs=None):
-    """Two-pass: (1) quality filter + step metrics, (2) stain+value norm + step metrics.
-    candidate_indices: if set, only these indices are considered (e.g. deduplicated set); else all 0..n_total-1.
-    resume: if True, load Step 1 from checkpoint when present; skip split if output H5 already exists.
-    If stain_router and ref_packs are set (len 3), use multi-reference routing; else single (macenko, reinhard, ref_mean_rgb).
-    """
+    """Quality filter pass then stain/value write; optional multi-ref via stain_router + ref_packs."""
     from staintools.preprocessing.luminosity_standardizer import LuminosityStandardizer
 
     ckpt_step1 = os.path.join(out_dir, "checkpoint_step1_{}.npz".format(split_name))
@@ -562,7 +514,6 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
     n_total = len(candidate_indices)
     class_balance_before = _label_stats_for_indices(y_path, candidate_indices)
 
-    # ---- Resume: try load Step 1 checkpoint ----
     if resume and os.path.isfile(ckpt_step1):
         data = np.load(ckpt_step1, allow_pickle=False)
         kept = np.array(data["kept_indices"])
@@ -571,7 +522,6 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
         n_low_tissue = int(data["n_low_tissue"])
         n_total = int(data["n_total"])
         n_kept = len(kept)
-        # If output already exists with correct size, skip entire split
         if os.path.isfile(out_x) and os.path.isfile(out_y):
             with h5py.File(out_x, "r") as f:
                 if f["x"].shape[0] == n_kept:
@@ -596,7 +546,6 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
                     }
         print("[{}] Resuming: Step 1 (from checkpoint), Step 2-3 ...".format(split_name))
     else:
-        # ---- Step 1: Quality filter (with removal reasons for effectiveness) ----
         print("[{}] Step 1: Quality filter (over {} candidates) ...".format(split_name, n_total))
         kept = []
         n_solid = n_black = n_low_tissue = 0
@@ -629,7 +578,6 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
         n_removed = n_total - n_kept
         print("  Step 1 summary: kept {} / {}  |  removed: {} (solid_color: {}, high_black: {}, low_tissue: {})".format(
             n_kept, n_total, n_removed, n_solid, n_black, n_low_tissue))
-        # Save Step 1 checkpoint (allows --resume to skip this step next time)
         np.savez_compressed(ckpt_step1, kept_indices=kept, n_solid=np.int64(n_solid), n_black=np.int64(n_black),
                             n_low_tissue=np.int64(n_low_tissue), n_total=np.int64(n_total))
         print("  Checkpoint saved: {}".format(os.path.basename(ckpt_step1)))
@@ -639,9 +587,7 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
                     "class_balance_before": class_balance_before,
                     "step1_removed": {"solid_color": n_solid, "high_black": n_black, "low_tissue": n_low_tissue}}
 
-    # ---- Step 2 & 3: Stain + value norm, and per-step effectiveness (on a sample) ----
     print("[{}] Step 2-3: Stain normalization + value [0,1] ...".format(split_name))
-    # Per-split blue_dom threshold (generalizable: each split gets its own 25th percentile)
     blue_dom_threshold = compute_blue_dom_threshold(x_path, kept, BLUE_DOM_PERCENTILE)
     print("  blue_dom_threshold ({}th pct, this split): {:.4f}".format(int(BLUE_DOM_PERCENTILE), blue_dom_threshold))
     n_sample = min(2000, n_kept)
@@ -650,14 +596,14 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
     qa_positions = sorted(np.random.RandomState(123).choice(n_kept, size=n_qa, replace=False).tolist()) if n_qa > 0 else []
     before_mean_rgb = []
     after_stain_mean_rgb = []
-    before_pink_pct = []   # fraction of pixels with R > B (pink-ish vs purple)
+    before_pink_pct = []
     after_pink_pct = []
     after_value_min = []
     after_value_max = []
     after_value_mean = []
 
     lum_std = LuminosityStandardizer()
-    sample_dist_before = []  # per-sample L1 to chosen ref mean RGB (meaningful for multi-ref)
+    sample_dist_before = []
     sample_dist_after = []
     with h5py.File(x_path, "r") as f_x_in, h5py.File(y_path, "r") as f_y_in, \
          h5py.File(out_x, "w") as f_x, h5py.File(out_y, "w") as f_y:
@@ -667,8 +613,8 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
         f_y.create_dataset("y", shape=(n_kept,), dtype=np.float32)
 
         kept_labels = []
-        normalizer_used = []  # per output index: 0=Macenko, 1=Reinhard, 2=Macenko_fallback, 3=Reinhard_fallback, 4=luminosity_only
-        mean_r_per_patch = []  # for percentile-based purple detection (per split, generalizable)
+        normalizer_used = []
+        mean_r_per_patch = []
         pink_pct_per_patch = []
         for pos, idx in enumerate(tqdm(kept, desc="  stain+value", leave=False)):
             p = np.array(x_data[idx])
@@ -715,7 +661,6 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
             f_x["x"][pos] = preprocessed
             f_y["y"][pos] = label
 
-        # Percentile-based purple detection (generalizable per split): replace worst PURPLE_PERCENTILE% with luminosity-only
         mean_r_all = np.array(mean_r_per_patch, dtype=np.float64)
         pink_pct_all = np.array(pink_pct_per_patch, dtype=np.float64)
         thresh_mean_r = np.percentile(mean_r_all, PURPLE_PERCENTILE)
@@ -731,16 +676,13 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
             f_x["x"][pos] = preprocessed
             normalizer_used[pos] = NORM_LUMINOSITY_ONLY
 
-        # Save which normalizer was used per patch (0=Macenko, 1=Reinhard, 2=Macenko_fallback, 3=Reinhard_fallback, 4=luminosity_only)
         normalizer_path = os.path.join(out_dir, "{}_normalizer_used.npy".format(split_name))
         np.save(normalizer_path, np.array(normalizer_used, dtype=np.uint8))
         print("  Saved normalizer-per-patch:", os.path.basename(normalizer_path))
-        # Save indices of patches that went all-purple (by percentile) and were replaced by luminosity-only
         purple_path = os.path.join(out_dir, "{}_purple_fallback.npy".format(split_name))
         np.save(purple_path, np.array(purple_fallback_indices, dtype=np.int64))
         print("  All-purple (percentile-based) replaced with luminosity-only: {} patches -> {}".format(len(purple_fallback_indices), os.path.basename(purple_path)))
 
-        # Save QA sample pack (before/after + metadata) so we can quickly visual-check without rerunning notebooks.
         if n_qa > 0:
             qa_orig = []
             qa_norm = []
@@ -770,7 +712,6 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
         else:
             qa_path = None
 
-    # Step 2 effectiveness: (a) distance to reference, (b) color preserved (pink not lost)
     before_arr = np.array(before_mean_rgb)
     after_arr = np.array(after_stain_mean_rgb)
     if sample_dist_before:
@@ -786,13 +727,11 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
     after_b = after_arr[:, 2]
     before_pink = np.array(before_pink_pct)
     after_pink = np.array(after_pink_pct)
-    # Purple-only after: patches that likely lost pink (very low R or almost no pink pixels)
     purple_only_after = np.sum((after_r < 0.2) | (after_pink < 0.05))
     mean_r_before = float(np.mean(before_r))
     mean_r_after = float(np.mean(after_r))
     mean_pink_before = float(np.mean(before_pink))
     mean_pink_after = float(np.mean(after_pink))
-    # Publication: std of mean R/G/B after (color consistency), outlier rate after
     std_r_after = float(np.std(after_arr[:, 0]))
     std_g_after = float(np.std(after_arr[:, 1]))
     std_b_after = float(np.std(after_arr[:, 2]))
@@ -807,11 +746,9 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
         thresh_mean_r, thresh_pink_pct, len(purple_fallback_indices)))
     print("    Sample purple count (fixed 0.2/0.05): {} / {}  (reference only; stored data uses percentile)".format(
         int(purple_only_after), len(after_r)))
-    # Step 3 effectiveness: value range
     print("  Step 3 (value) effectiveness (sample n={}): min={:.4f}, max={:.4f}, mean={:.4f}  (expect [0,1])".format(
         len(after_value_min), np.mean(after_value_min), np.mean(after_value_max), np.mean(after_value_mean)))
 
-    # Class balance (for publication: report positive/negative counts after preprocessing)
     kept_labels_arr = np.array(kept_labels)
     n_positive = int((kept_labels_arr >= 0.5).sum())
     n_negative = int((kept_labels_arr < 0.5).sum())
@@ -906,7 +843,6 @@ def main():
     QA_SAMPLES_PER_SPLIT = int(max(0, args.qa_samples_per_split))
     CLASS_BALANCE_ALERT_ABS_DIFF = float(max(0.0, args.class_balance_alert_diff))
 
-    # Default dedup-dir to pcam_dedup (next to project root) when not set and that dir exists
     if args.dedup_dir is None:
         default_dedup = os.path.join(PROJECT_ROOT, "pcam_dedup")
         if os.path.isdir(default_dedup) and os.path.isfile(os.path.join(default_dedup, "train_kept_indices.npy")):
@@ -922,7 +858,6 @@ def main():
         print("Error: data_dir not found:", data_dir)
         sys.exit(1)
 
-    # Paths: organized layout (training/, val/, test/)
     training_dir = os.path.join(data_dir, "training")
     val_dir = os.path.join(data_dir, "val")
     test_dir = os.path.join(data_dir, "test")
@@ -947,7 +882,6 @@ def main():
         print("Error: ref_config not found:", ref_config_path)
         sys.exit(1)
 
-    # Load dedup indices if requested (input = deduplicated set)
     dedup_dir = args.dedup_dir
     candidate_indices_per_split = None
     if dedup_dir:
@@ -982,7 +916,6 @@ def main():
         macenko, reinhard, ref_idx, ref_mean_rgb = ref_packs[0]["macenko"], ref_packs[0]["reinhard"], ref_packs[0]["idx"], ref_packs[0]["ref_mean_rgb"]
         print("Primary ref (pack 0) index:", ref_idx, "| mean RGB:", [round(x, 4) for x in ref_mean_rgb])
     else:
-        # Fit normalizers (blue_dom threshold is computed per-split in process_split)
         print("Loading reference and fitting normalizers ...")
         macenko, reinhard, ref_idx, ref_mean_rgb = get_normalizers_and_threshold(
             data_dir, train_x_path, ref_config_path
@@ -990,7 +923,6 @@ def main():
         print("Reference index:", ref_idx, "| ref mean RGB:", [round(x, 4) for x in ref_mean_rgb])
 
     if args.no_quality:
-        # Keep all candidates (no quality filter)
         def process_split_no_quality(split_name, x_path, y_path, candidate_indices=None):
             with h5py.File(x_path, "r") as f:
                 n_total_file = f["x"].shape[0]
@@ -1082,7 +1014,6 @@ def main():
         "normalizer_used_codes": {"0": "macenko", "1": "reinhard", "2": "macenko_fallback", "3": "reinhard_fallback", "4": "luminosity_only"},
     }
 
-    # Dataset-level summary for publication (totals across splits)
     total_before = sum(manifest[s]["n_total"] for s in ("train", "valid", "test"))
     total_kept = sum(manifest[s]["n_kept"] for s in ("train", "valid", "test"))
     total_removed = total_before - total_kept
@@ -1104,7 +1035,6 @@ def main():
         json.dump(manifest, f, indent=2)
     print("Done. Wrote", manifest_path)
 
-    # Publication-ready report: one flat structure for methods table / supplementary
     report = {
         "pipeline": ["quality_filter", "stain_normalization_macenko_reinhard", "value_normalization_0_1"],
         "config": manifest["config"],
@@ -1139,7 +1069,7 @@ def main():
     report_path = os.path.join(out_dir, "preprocess_report.json")
     with open(report_path, "w") as f:
         json.dump(report, f, indent=2)
-    print("Wrote publication report:", report_path)
+    print("Wrote preprocess_report.json:", report_path)
 
 
 if __name__ == "__main__":

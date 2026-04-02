@@ -1,31 +1,7 @@
-"""
-Train a binary classifier on preprocessed PCam using Virchow2 (frozen backbone).
+"""Train a frozen Virchow2 backbone + linear head on H5 from preprocess_pcam_to_h5.
 
-Data: Must be the output of scripts/preprocess_pcam_to_h5.py.
-      Expected dir: <preprocessed_dir>/ with files train_x.h5, train_y.h5, valid_x.h5, valid_y.h5.
-      Each *_x.h5 has dataset "x": shape (N, 96, 96, 3), float32, values in [0,1].
-      Each *_y.h5 has dataset "y": shape (N,), float32 (binary labels).
-      Default location: PROJECT_ROOT/pcam_data/preprocessed/ (same as preprocessing --data-dir pcam_data).
-      Patches are resized to 224x224 (bicubic) and ImageNet-normalized at load time for Virchow2.
-
-Model architecture (generalizable design):
-  - Backbone: Virchow2 (ViT-based histology foundation model from timm). Input 224x224 RGB.
-    Output: we take the class token and the mean of patch tokens, concatenated → 2560-dim
-    embedding. All backbone parameters are FROZEN so the representation stays general.
-  - Head: Linear(2560, 1) → single logit for binary classification (metastasis yes/no).
-    Only the head is trained. This keeps the foundation features fixed and adapts only
-    the decision layer to PCam, which helps generalization to other H&E datasets.
-
-Checkpointing: After each epoch we save checkpoint.pt (epoch, model, optimizer, best val acc).
-  Use --resume to load the latest checkpoint and continue from the next epoch.
-
-Usage:
-  python scripts/train_virchow_preprocessed.py --preprocessed-dir pcam_data/preprocessed
-  python scripts/train_virchow_preprocessed.py --preprocessed-dir pcam_data/preprocessed --resume
-
-Virchow2 is loaded from Hugging Face (paige-ai/Virchow2). Set HF_TOKEN in the environment
-or run `huggingface-cli login` if the model is gated.
-"""
+Expects train_x/y.h5 and valid_x/y.h5 (96×96 float [0,1]); loader resizes to 224 and ImageNet-normalizes.
+Checkpoint: out-dir/checkpoint.pt; --resume continues. Gated model: HF_TOKEN or huggingface-cli login."""
 
 from __future__ import print_function
 
@@ -40,7 +16,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
-# Optional
 try:
     from tqdm import tqdm
 except ImportError:
@@ -50,16 +25,15 @@ except ImportError:
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 
-# Defaults (match baseline training)
 EPOCHS = 10
 BATCH_SIZE = 64
-EMBED_DIM = 2560  # Virchow2: class token + patch_tokens.mean(1)
+EMBED_DIM = 2560
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
 class PreprocessedPCamDataset(Dataset):
-    """Load preprocessed PCam from HDF5. Patches 96x96 [0,1]; resize to 224 and ImageNet-normalize."""
+    """HDF5 PCam patches; resize to 224 and ImageNet-normalize."""
 
     def __init__(self, x_path, y_path, resize_size=224):
         import h5py
@@ -75,10 +49,9 @@ class PreprocessedPCamDataset(Dataset):
     def __getitem__(self, idx):
         import h5py
         with h5py.File(self.x_path, "r") as fx, h5py.File(self.y_path, "r") as fy:
-            x = np.array(fx["x"][idx], dtype=np.float32)  # (96, 96, 3)
+            x = np.array(fx["x"][idx], dtype=np.float32)
             y = float(np.array(fy["y"][idx]).flatten()[0])
-        # HWC -> CHW, then resize 96 -> 224 (bicubic), then ImageNet normalize
-        x = torch.from_numpy(x).permute(2, 0, 1)  # (3, 96, 96)
+        x = torch.from_numpy(x).permute(2, 0, 1)
         x = F.interpolate(
             x.unsqueeze(0),
             size=(self.resize_size, self.resize_size),
@@ -103,7 +76,7 @@ def get_embedding(backbone, x):
 
 
 class VirchowClassifier(nn.Module):
-    """Frozen Virchow2 backbone + trainable linear head (2560 -> 1 logit)."""
+    """Frozen Virchow2 + trainable Linear(2560, 1)."""
 
     def __init__(self, backbone, embed_dim=EMBED_DIM):
         super().__init__()
@@ -114,12 +87,12 @@ class VirchowClassifier(nn.Module):
 
     def train(self, mode=True):
         super().train(mode)
-        self.backbone.eval()  # keep backbone in eval (frozen)
+        self.backbone.eval()
         return self
 
     def forward(self, x):
         emb = get_embedding(self.backbone, x)
-        return self.head(emb).squeeze(-1)  # (B,)
+        return self.head(emb).squeeze(-1)
 
 
 def train_one_epoch(model, loader, criterion, optimizer, device, epoch, total_epochs, log_every_batches=500):
@@ -170,7 +143,6 @@ def evaluate(model, loader, device, desc="val"):
         all_labels.append(y.cpu())
     preds = torch.cat(all_preds).numpy()
     labels = torch.cat(all_labels).numpy()
-    # Confusion: true neg=0,0; false pos=0,1; false neg=1,0; true pos=1,1
     tn = ((preds == 0) & (labels == 0)).sum()
     fp = ((preds == 1) & (labels == 0)).sum()
     fn = ((preds == 0) & (labels == 1)).sum()
@@ -220,13 +192,11 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Device:", device)
 
-    # Data
     train_ds = PreprocessedPCamDataset(train_x, train_y)
     valid_ds = PreprocessedPCamDataset(valid_x, valid_y)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=0, pin_memory=(device.type == "cuda"))
     valid_loader = DataLoader(valid_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
-    # Backbone: Virchow2 (timm)
     try:
         from timm.layers import SwiGLUPacked
         import timm
@@ -244,7 +214,6 @@ def main():
         )
         backbone = backbone.to(device).eval()
         model = VirchowClassifier(backbone).to(device)
-        # Sanity check: dummy forward pass
         dummy = torch.randn(1, 3, 224, 224, device=device)
         with torch.no_grad():
             logits = model(dummy)
@@ -273,7 +242,6 @@ def main():
         if args.resume:
             print("No checkpoint found at", checkpoint_path, "; starting from epoch 0")
 
-    # Training loop
     n_train = len(train_ds)
     n_val = len(valid_ds)
     print("\nTraining: {} epochs (from {} to {}), train samples: {}, val samples: {}".format(
@@ -312,7 +280,6 @@ def main():
         }, checkpoint_path)
         print("  checkpoint saved:", checkpoint_path)
 
-    # Final metrics
     metrics = {
         "best_val_acc": best_val_acc,
         "epochs": args.epochs,
