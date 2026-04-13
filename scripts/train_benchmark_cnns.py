@@ -1,10 +1,10 @@
 """
 Train the same baseline CNN on benchmark H5 folders (fair comparison across stain methods).
 
-Uses the same architecture as notebooks/pcam_baseline_training.ipynb (build_baseline_cnn).
-Each run: fixed seed, same hyperparameters, data already normalized in [0,1] from prepare_stain_benchmark_h5.
+Architecture matches notebooks/pcam_baseline_training.ipynb (Keras functional baseline),
+implemented in PyTorch (NHWC numpy loads -> NCHW tensors). Uses CUDA when available.
 
-Long-run: per-epoch checkpoints, best-by-val-AUC weights, JSON metrics history, resume support.
+Checkpoints: best_val_auc / last / per-epoch as *.pt (state_dict only).
 """
 
 from __future__ import annotations
@@ -12,12 +12,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
 import h5py
 import numpy as np
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
 
 try:
     from tqdm import tqdm
@@ -33,35 +37,49 @@ def _set_seeds(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
-    try:
-        import tensorflow as tf
-
-        tf.random.set_seed(seed)
-    except ImportError:
-        pass
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
-def build_baseline_cnn(input_shape=(96, 96, 3)):
-    try:
-        from tensorflow import keras
-        from tensorflow.keras import layers
-    except ImportError:
-        import keras
-        from keras import layers
+class BaselineCNN(nn.Module):
+    """
+    Keras parity: Conv32-same-MP, Conv64-same-MP, Conv128-same-MP, Conv256-same,
+    GlobalAvgPool, Dense128+Dropout0.5, output logit (use BCEWithLogitsLoss).
+    """
 
-    inp = keras.Input(shape=input_shape)
-    x = layers.Conv2D(32, 3, activation="relu", padding="same")(inp)
-    x = layers.MaxPool2D(2)(x)
-    x = layers.Conv2D(64, 3, activation="relu", padding="same")(x)
-    x = layers.MaxPool2D(2)(x)
-    x = layers.Conv2D(128, 3, activation="relu", padding="same")(x)
-    x = layers.MaxPool2D(2)(x)
-    x = layers.Conv2D(256, 3, activation="relu", padding="same")(x)
-    x = layers.GlobalAveragePooling2D()(x)
-    x = layers.Dense(128, activation="relu")(x)
-    x = layers.Dropout(0.5)(x)
-    out = layers.Dense(1, activation="sigmoid")(x)
-    return keras.Model(inp, out)
+    def __init__(self):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Conv2d(128, 256, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d(1),
+        )
+        self.head = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(256, 128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.5),
+            nn.Linear(128, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.features(x)
+        return self.head(x)
+
+
+def _nhwc_to_tensor(x: np.ndarray, device: torch.device) -> torch.Tensor:
+    t = torch.from_numpy(np.ascontiguousarray(x)).permute(0, 3, 1, 2).float()
+    return t.to(device, non_blocking=True)
 
 
 def load_h5_xy(method_dir: Path):
@@ -89,7 +107,7 @@ def load_h5_xy(method_dir: Path):
     return train_x, train_y, val_x, val_y, test_x, test_y
 
 
-def _binary_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> dict[str, float]:
+def _binary_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> dict[str, Any]:
     from sklearn.metrics import (
         accuracy_score,
         balanced_accuracy_score,
@@ -152,51 +170,71 @@ def _json_safe_dump(obj: Any) -> Any:
     return obj
 
 
-def predict_in_batches(model, x: np.ndarray, batch_size: int, desc: str = "predict") -> np.ndarray:
-    n = x.shape[0]
+def predict_proba_batches(
+    model: nn.Module,
+    x_nhwc: np.ndarray,
+    batch_size: int,
+    device: torch.device,
+    desc: str = "predict",
+) -> np.ndarray:
+    model.eval()
+    n = x_nhwc.shape[0]
     outs = []
-    for start in tqdm(
-        range(0, n, batch_size),
-        desc=desc,
-        unit="batch",
-        leave=False,
-        total=(n + batch_size - 1) // batch_size,
-    ):
-        end = min(start + batch_size, n)
-        outs.append(model.predict(x[start:end], verbose=0))
+    with torch.no_grad():
+        for start in tqdm(
+            range(0, n, batch_size),
+            desc=desc,
+            unit="batch",
+            leave=False,
+            total=(n + batch_size - 1) // batch_size,
+        ):
+            end = min(start + batch_size, n)
+            xb = _nhwc_to_tensor(x_nhwc[start:end], device)
+            logits = model(xb)
+            prob = torch.sigmoid(logits).cpu().numpy().reshape(-1)
+            outs.append(prob)
     return np.concatenate(outs, axis=0)
 
 
-class EpochEvalCallback:
-    """Holds val/test arrays and state; use with Keras Callback wrapper below."""
+class EpochEvalTracker:
+    """Per-epoch val metrics, confusion matrix, checkpoints (.pt)."""
 
     def __init__(
         self,
+        model: nn.Module,
         val_x,
         val_y,
         test_x,
         test_y,
         out_dir: Path,
+        device: torch.device,
         pred_batch_size: int,
         eval_test_each_epoch: bool,
     ):
+        self.model = model
         self.val_x = val_x
         self.val_y = val_y
         self.test_x = test_x
         self.test_y = test_y
         self.out_dir = out_dir
+        self.device = device
         self.pred_batch_size = pred_batch_size
         self.eval_test_each_epoch = eval_test_each_epoch
         self.history: list[dict] = []
         self.best_auc = -1.0
         out_dir.mkdir(parents=True, exist_ok=True)
 
-    def on_epoch_end(self, model, epoch, logs=None):
-        logs = logs or {}
-        print(f"\n--- Epoch {epoch + 1} evaluation ---")
+    def save_weights(self, path: Path) -> None:
+        torch.save(self.model.state_dict(), path)
 
-        val_prob = predict_in_batches(
-            model, self.val_x, self.pred_batch_size, desc=f"val ep{epoch + 1}"
+    def on_epoch_end(self, epoch: int, train_loss: float, train_acc: float) -> None:
+        print(f"\n--- Epoch {epoch + 1} evaluation ---")
+        val_prob = predict_proba_batches(
+            self.model,
+            self.val_x,
+            self.pred_batch_size,
+            self.device,
+            desc=f"val ep{epoch + 1}",
         )
         val_m = _binary_metrics(self.val_y, val_prob)
         _print_confusion("val", val_m)
@@ -218,14 +256,18 @@ class EpochEvalCallback:
 
         record = {
             "epoch": int(epoch + 1),
-            "train_loss": float(logs.get("loss", 0.0)),
-            "train_accuracy": float(logs.get("accuracy", 0.0)),
+            "train_loss": float(train_loss),
+            "train_accuracy": float(train_acc),
             "val": val_m,
         }
 
         if self.eval_test_each_epoch:
-            test_prob = predict_in_batches(
-                model, self.test_x, self.pred_batch_size, desc=f"test ep{epoch + 1}"
+            test_prob = predict_proba_batches(
+                self.model,
+                self.test_x,
+                self.pred_batch_size,
+                self.device,
+                desc=f"test ep{epoch + 1}",
             )
             test_m = _binary_metrics(self.test_y, test_prob)
             _print_confusion("test", test_m)
@@ -237,35 +279,59 @@ class EpochEvalCallback:
             json.dump(_json_safe_dump(self.history), f, indent=2)
         print(f"  Saved: {hist_path}")
 
-        last_w = self.out_dir / "weights_last.weights.h5"
-        model.save_weights(last_w)
+        last_w = self.out_dir / "weights_last.pt"
+        self.save_weights(last_w)
         print(f"  Checkpoint: {last_w}")
 
-        ep_w = self.out_dir / f"weights_epoch_{epoch + 1:03d}.weights.h5"
-        model.save_weights(ep_w)
+        ep_w = self.out_dir / f"weights_epoch_{epoch + 1:03d}.pt"
+        self.save_weights(ep_w)
 
         auc = val_m["auc"]
+        best_w = self.out_dir / "weights_best_val_auc.pt"
         if not np.isnan(auc) and auc > self.best_auc:
             self.best_auc = auc
-            best_w = self.out_dir / "weights_best_val_auc.weights.h5"
-            model.save_weights(best_w)
+            self.save_weights(best_w)
             print(f"  New best val AUC={auc:.4f} -> {best_w}")
+        elif not best_w.exists():
+            self.save_weights(best_w)
+            print(f"  Seeded best checkpoint -> {best_w}")
 
         prog = {
             "last_completed_epoch": int(epoch + 1),
-            "best_val_auc": float(self.best_auc),
+            "best_val_auc": float(self.best_auc)
+            if not np.isnan(self.best_auc)
+            else None,
             "epochs_done": len(self.history),
         }
         with open(self.out_dir / "run_progress.json", "w", encoding="utf-8") as f:
-            json.dump(prog, f, indent=2)
+            json.dump(_json_safe_dump(prog), f, indent=2)
 
 
-def _make_epoch_callback(keras_mod, eval_state: EpochEvalCallback):
-    class _EpochCb(keras_mod.callbacks.Callback):
-        def on_epoch_end(self, epoch, logs=None):
-            eval_state.on_epoch_end(self.model, epoch, logs)
-
-    return _EpochCb()
+def train_one_epoch(
+    model: nn.Module,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.Module,
+    device: torch.device,
+) -> tuple[float, float]:
+    model.train()
+    total_loss = 0.0
+    correct = 0
+    total = 0
+    for xb, yb in tqdm(loader, desc="train", leave=False, unit="batch"):
+        xb = xb.to(device, non_blocking=True)
+        yb = yb.to(device, non_blocking=True)
+        optimizer.zero_grad(set_to_none=True)
+        logits = model(xb).squeeze(-1)
+        loss = criterion(logits, yb)
+        loss.backward()
+        optimizer.step()
+        bs = xb.size(0)
+        total_loss += loss.item() * bs
+        pred = (torch.sigmoid(logits) >= 0.5).float()
+        correct += (pred == yb).sum().item()
+        total += bs
+    return total_loss / max(total, 1), correct / max(total, 1)
 
 
 def train_one_method(
@@ -276,15 +342,21 @@ def train_one_method(
     lr: float,
     seed: int,
     resume: bool,
+    fresh: bool,
     pred_batch_size: int,
     eval_test_each_epoch: bool,
 ) -> None:
-    try:
-        from tensorflow import keras
-    except ImportError:
-        import keras
-
     _set_seeds(seed)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        print(
+            "GPU: CUDA available — {} (device {})".format(
+                torch.cuda.get_device_name(0), device
+            )
+        )
+    else:
+        print("GPU: CUDA not available — using CPU.")
+
     print(f"Loading H5 from {method_dir} ...")
     train_x, train_y, val_x, val_y, test_x, test_y = load_h5_xy(method_dir)
     print(
@@ -292,8 +364,15 @@ def train_one_method(
     )
 
     out_dir = Path(out_dir)
+    if fresh:
+        if out_dir.exists():
+            print(f"--fresh: removing previous run directory:\n  {out_dir}")
+            shutil.rmtree(out_dir)
+        resume = False
+
     out_dir.mkdir(parents=True, exist_ok=True)
     cfg = {
+        "backend": "pytorch",
         "method_dir": str(method_dir.resolve()),
         "out_dir": str(out_dir.resolve()),
         "epochs": epochs,
@@ -302,74 +381,116 @@ def train_one_method(
         "seed": seed,
         "pred_batch_size": pred_batch_size,
         "eval_test_each_epoch": eval_test_each_epoch,
-        "model": "baseline_cnn_notebook",
+        "model": "baseline_cnn_notebook (PyTorch)",
+        "checkpoints": "*.pt (state_dict)",
     }
-    if not resume or not (out_dir / "run_config.json").exists():
+    if fresh or not resume or not (out_dir / "run_config.json").exists():
         with open(out_dir / "run_config.json", "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
 
-    model = build_baseline_cnn()
-    model.compile(
-        optimizer=keras.optimizers.Adam(learning_rate=lr),
-        loss="binary_crossentropy",
-        metrics=["accuracy"],
+    x_train_t = torch.from_numpy(np.ascontiguousarray(train_x)).permute(0, 3, 1, 2).float()
+    y_train_t = torch.from_numpy(np.ascontiguousarray(train_y)).float()
+    train_loader = DataLoader(
+        TensorDataset(x_train_t, y_train_t),
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=torch.cuda.is_available(),
     )
 
-    initial_epoch = 0
-    last_w = out_dir / "weights_last.weights.h5"
-    if resume and last_w.exists():
-        model.load_weights(last_w)
-        prog_path = out_dir / "run_progress.json"
-        if prog_path.exists():
-            with open(prog_path, encoding="utf-8") as f:
-                p = json.load(f)
-            initial_epoch = int(p.get("last_completed_epoch", 0))
-        print(f"Resume: loaded {last_w}, continuing from epoch {initial_epoch}")
+    model = BaselineCNN().to(device)
+    criterion = nn.BCEWithLogitsLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
-    cb = EpochEvalCallback(
+    tracker = EpochEvalTracker(
+        model,
         val_x,
         val_y,
         test_x,
         test_y,
         out_dir,
+        device,
         pred_batch_size,
         eval_test_each_epoch,
     )
-    if resume and (out_dir / "metrics_per_epoch.json").exists():
-        with open(out_dir / "metrics_per_epoch.json", encoding="utf-8") as f:
-            cb.history = json.load(f)
-        if cb.history:
-            cb.best_auc = max(
-                (h["val"]["auc"] for h in cb.history if not np.isnan(h["val"]["auc"])),
-                default=-1.0,
+
+    start_epoch = 0
+    last_w = out_dir / "weights_last.pt"
+    hist_path = out_dir / "metrics_per_epoch.json"
+    prog_path = out_dir / "run_progress.json"
+
+    if resume and hist_path.exists():
+        with open(hist_path, encoding="utf-8") as f:
+            tracker.history = json.load(f)
+        start_epoch = len(tracker.history)
+        if tracker.history:
+            aus = []
+            for h in tracker.history:
+                a = h["val"].get("auc")
+                if a is None:
+                    continue
+                af = float(a)
+                if not np.isnan(af):
+                    aus.append(af)
+            tracker.best_auc = max(aus) if aus else -1.0
+        if prog_path.exists():
+            with open(prog_path, encoding="utf-8") as f:
+                prog_epoch = int(json.load(f).get("last_completed_epoch", 0))
+            if prog_epoch != start_epoch:
+                print(
+                    "Warning: run_progress last_completed_epoch={} != len(metrics_per_epoch)={}; "
+                    "using metrics length for resume.".format(prog_epoch, start_epoch)
+                )
+        if last_w.exists():
+            model.load_state_dict(torch.load(last_w, map_location=device))
+            print(
+                "Resume: loaded {}  |  start_epoch={} (epochs in metrics_per_epoch.json)".format(
+                    last_w, start_epoch
+                )
             )
+        else:
+            print(
+                "Warning: metrics_per_epoch.json exists but weights_last.pt missing; "
+                "starting from epoch 0."
+            )
+            start_epoch = 0
+            tracker.history = []
+            tracker.best_auc = -1.0
+    elif resume and last_w.exists():
+        model.load_state_dict(torch.load(last_w, map_location=device))
+        if prog_path.exists():
+            with open(prog_path, encoding="utf-8") as f:
+                start_epoch = int(json.load(f).get("last_completed_epoch", 0))
+        print(
+            "Resume: loaded {}  |  start_epoch={} (from run_progress; no metrics file)".format(
+                last_w, start_epoch
+            )
+        )
 
-    epoch_cb = _make_epoch_callback(keras, cb)
-
-    remaining = max(0, epochs - initial_epoch)
-    if remaining == 0:
+    if start_epoch >= epochs:
         print("No remaining epochs (already completed).")
         return
 
-    print(f"Training epochs {initial_epoch + 1} .. {epochs} (remaining {remaining})")
-    # No validation_data here: avoids an extra full pass on val each epoch; metrics come from EpochEvalCallback only.
-    model.fit(
-        train_x,
-        train_y,
-        batch_size=batch_size,
-        epochs=epochs,
-        initial_epoch=initial_epoch,
-        verbose=1,
-        shuffle=True,
-        callbacks=[epoch_cb],
-    )
+    print(f"Training epochs {start_epoch + 1} .. {epochs}")
+    for epoch in range(start_epoch, epochs):
+        train_loss, train_acc = train_one_epoch(
+            model, train_loader, optimizer, criterion, device
+        )
+        print(
+            "\nEpoch {}/{}  train_loss={:.4f}  train_acc={:.4f}".format(
+                epoch + 1, epochs, train_loss, train_acc
+            )
+        )
+        tracker.on_epoch_end(epoch, train_loss, train_acc)
 
-    best_path = out_dir / "weights_best_val_auc.weights.h5"
+    best_path = out_dir / "weights_best_val_auc.pt"
     if not best_path.exists():
-        best_path = out_dir / "weights_last.weights.h5"
-    model.load_weights(best_path)
+        best_path = out_dir / "weights_last.pt"
+    model.load_state_dict(torch.load(best_path, map_location=device))
     print(f"\nFinal evaluation using {best_path.name}")
-    test_prob = predict_in_batches(model, test_x, pred_batch_size, desc="test final")
+    test_prob = predict_proba_batches(
+        model, test_x, pred_batch_size, device, desc="test final"
+    )
     test_m = _binary_metrics(test_y, test_prob)
     _print_confusion("test (final)", test_m)
     print(
@@ -395,7 +516,9 @@ DEFAULT_METHODS = (
 
 def main():
     root = Path(__file__).resolve().parent.parent
-    parser = argparse.ArgumentParser(description="Train baseline CNN on benchmark H5 per stain method.")
+    parser = argparse.ArgumentParser(
+        description="Train baseline CNN (PyTorch) on benchmark H5 per stain method."
+    )
     parser.add_argument(
         "--benchmark-root",
         type=str,
@@ -406,24 +529,38 @@ def main():
         "--method",
         type=str,
         default=None,
-        help="Single method folder name (e.g. macenko). Default: train all known methods present.",
+        help="Single method folder name (e.g. macenko). Default: all methods with train_x.h5.",
     )
     parser.add_argument(
         "--runs-root",
         type=str,
         default=str(root / "experiments" / "benchmark_cnn_runs"),
-        help="Root for outputs experiments/benchmark_cnn_runs/<method>/",
+        help="Output root: <runs-root>/<method>/",
     )
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--resume", action="store_true", help="Resume from weights_last.weights.h5")
-    parser.add_argument("--pred-batch-size", type=int, default=256, help="Batch size for metric prediction")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from weights_last.pt (+ metrics_per_epoch.json if present)",
+    )
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Delete this method's run directory under --runs-root before training.",
+    )
+    parser.add_argument(
+        "--pred-batch-size",
+        type=int,
+        default=256,
+        help="Batch size for val/test prediction",
+    )
     parser.add_argument(
         "--eval-test-each-epoch",
         action="store_true",
-        help="Also compute test metrics+CM every epoch (slower, stricter comparability log)",
+        help="Compute test metrics every epoch (slower)",
     )
     args = parser.parse_args()
 
@@ -463,6 +600,7 @@ def main():
                 lr=args.lr,
                 seed=args.seed,
                 resume=args.resume,
+                fresh=args.fresh,
                 pred_batch_size=args.pred_batch_size,
                 eval_test_each_epoch=args.eval_test_each_epoch,
             )

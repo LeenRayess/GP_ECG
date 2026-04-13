@@ -1,4 +1,4 @@
-"""PCam preprocessing: quality filter, Macenko/Reinhard (plus fallbacks), scale to [0,1], write H5.
+"""PCam preprocessing: quality filter, stain normalization, scale to [0,1], write H5.
 
 Reads original PCam layout under data_dir; optional --dedup-dir restricts to dedup_pcam kept indices.
 Needs experiments/stain_reference/stain_reference.json. Outputs under data_dir/<preprocessed_subdir>/:
@@ -372,6 +372,35 @@ def normalize_patch(patch_01, macenko, reinhard, blue_dom_threshold, luminosity_
     return out
 
 
+def normalize_patch_macenko_benchmark_style(
+    patch_01,
+    macenko,
+    luminosity_standardizer,
+    return_after_stain=False,
+    return_which_normalizer=False,
+):
+    """Benchmark-style classical Macenko: luminosity standardize -> Macenko, else luminosity-only."""
+    pu8 = to_uint8(patch_01)
+    try:
+        pstd = luminosity_standardizer(pu8)
+    except Exception:
+        pstd = pu8
+    try:
+        norm_u8 = macenko.transform(pstd)
+        which = NORM_MACENKO
+    except Exception:
+        norm_u8 = pstd
+        which = NORM_LUMINOSITY_ONLY
+    out = np.clip(norm_u8.astype(np.float32) / 255.0, 0.0, 1.0)
+    if return_after_stain and return_which_normalizer:
+        return out, norm_u8, which
+    if return_after_stain:
+        return out, norm_u8
+    if return_which_normalizer:
+        return out, which
+    return out
+
+
 def _l1_dist_mean_rgb(mean_rgb, ref_mean_rgb):
     return sum(abs(a - b) for a, b in zip(mean_rgb, ref_mean_rgb))
 
@@ -494,7 +523,7 @@ def print_preprocess_status(out_dir):
 
 
 def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_mean_rgb, candidate_indices=None, resume=False,
-                   stain_router=None, ref_packs=None):
+                   stain_router=None, ref_packs=None, stain_mode="adaptive"):
     """Quality filter pass then stain/value write; optional multi-ref via stain_router + ref_packs."""
     from staintools.preprocessing.luminosity_standardizer import LuminosityStandardizer
 
@@ -588,8 +617,12 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
                     "step1_removed": {"solid_color": n_solid, "high_black": n_black, "low_tissue": n_low_tissue}}
 
     print("[{}] Step 2-3: Stain normalization + value [0,1] ...".format(split_name))
-    blue_dom_threshold = compute_blue_dom_threshold(x_path, kept, BLUE_DOM_PERCENTILE)
-    print("  blue_dom_threshold ({}th pct, this split): {:.4f}".format(int(BLUE_DOM_PERCENTILE), blue_dom_threshold))
+    blue_dom_threshold = None
+    if stain_mode == "adaptive":
+        blue_dom_threshold = compute_blue_dom_threshold(x_path, kept, BLUE_DOM_PERCENTILE)
+        print("  blue_dom_threshold ({}th pct, this split): {:.4f}".format(int(BLUE_DOM_PERCENTILE), blue_dom_threshold))
+    else:
+        print("  stain mode: macenko (benchmark-style classical transform)")
     n_sample = min(2000, n_kept)
     sample_positions = set(np.random.RandomState(42).choice(n_kept, size=n_sample, replace=False).tolist())
     n_qa = min(QA_SAMPLES_PER_SPLIT, n_kept)
@@ -629,10 +662,15 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
                 mac_u, rei_u, ref_m = macenko, reinhard, ref_mean_rgb
             in_sample = pos in sample_positions
             if in_sample:
-                preprocessed, norm_u8, which_norm = normalize_patch(
-                    p01, mac_u, rei_u, blue_dom_threshold, lum_std.standardize,
-                    return_after_stain=True, return_which_normalizer=True
-                )
+                if stain_mode == "adaptive":
+                    preprocessed, norm_u8, which_norm = normalize_patch(
+                        p01, mac_u, rei_u, blue_dom_threshold, lum_std.standardize,
+                        return_after_stain=True, return_which_normalizer=True
+                    )
+                else:
+                    preprocessed, norm_u8, which_norm = normalize_patch_macenko_benchmark_style(
+                        p01, mac_u, lum_std.standardize, return_after_stain=True, return_which_normalizer=True
+                    )
                 normalizer_used.append(which_norm)
                 mr, pp = _mean_r_pink_pct(preprocessed)
                 mean_r_per_patch.append(mr)
@@ -650,10 +688,15 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
                 after_value_max.append(float(preprocessed.max()))
                 after_value_mean.append(float(preprocessed.mean()))
             else:
-                preprocessed, which_norm = normalize_patch(
-                    p01, mac_u, rei_u, blue_dom_threshold, lum_std.standardize,
-                    return_which_normalizer=True
-                )
+                if stain_mode == "adaptive":
+                    preprocessed, which_norm = normalize_patch(
+                        p01, mac_u, rei_u, blue_dom_threshold, lum_std.standardize,
+                        return_which_normalizer=True
+                    )
+                else:
+                    preprocessed, which_norm = normalize_patch_macenko_benchmark_style(
+                        p01, mac_u, lum_std.standardize, return_which_normalizer=True
+                    )
                 normalizer_used.append(which_norm)
                 mr, pp = _mean_r_pink_pct(preprocessed)
                 mean_r_per_patch.append(mr)
@@ -663,18 +706,23 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
 
         mean_r_all = np.array(mean_r_per_patch, dtype=np.float64)
         pink_pct_all = np.array(pink_pct_per_patch, dtype=np.float64)
-        thresh_mean_r = np.percentile(mean_r_all, PURPLE_PERCENTILE)
-        thresh_pink_pct = np.percentile(pink_pct_all, PURPLE_PERCENTILE)
-        purple_fallback_indices = np.where((mean_r_all <= thresh_mean_r) | (pink_pct_all <= thresh_pink_pct))[0].tolist()
-        print("  Purple (percentile-based): thresh mean_r={:.4f}, pink_pct={:.4f} -> {} patches below threshold".format(
-            thresh_mean_r, thresh_pink_pct, len(purple_fallback_indices)))
-        for pos in tqdm(purple_fallback_indices, desc="  purple->luminosity", leave=False):
-            idx = int(kept[pos])
-            p = np.array(x_data[idx])
-            p01 = np.clip(p.astype(np.float64) / 255.0, 0, 1) if p.max() > 1 else np.clip(p.astype(np.float64), 0, 1)
-            preprocessed = _luminosity_only_norm(p01, lum_std.standardize)
-            f_x["x"][pos] = preprocessed
-            normalizer_used[pos] = NORM_LUMINOSITY_ONLY
+        if stain_mode == "adaptive":
+            thresh_mean_r = np.percentile(mean_r_all, PURPLE_PERCENTILE)
+            thresh_pink_pct = np.percentile(pink_pct_all, PURPLE_PERCENTILE)
+            purple_fallback_indices = np.where((mean_r_all <= thresh_mean_r) | (pink_pct_all <= thresh_pink_pct))[0].tolist()
+            print("  Purple (percentile-based): thresh mean_r={:.4f}, pink_pct={:.4f} -> {} patches below threshold".format(
+                thresh_mean_r, thresh_pink_pct, len(purple_fallback_indices)))
+            for pos in tqdm(purple_fallback_indices, desc="  purple->luminosity", leave=False):
+                idx = int(kept[pos])
+                p = np.array(x_data[idx])
+                p01 = np.clip(p.astype(np.float64) / 255.0, 0, 1) if p.max() > 1 else np.clip(p.astype(np.float64), 0, 1)
+                preprocessed = _luminosity_only_norm(p01, lum_std.standardize)
+                f_x["x"][pos] = preprocessed
+                normalizer_used[pos] = NORM_LUMINOSITY_ONLY
+        else:
+            thresh_mean_r = None
+            thresh_pink_pct = None
+            purple_fallback_indices = []
 
         normalizer_path = os.path.join(out_dir, "{}_normalizer_used.npy".format(split_name))
         np.save(normalizer_path, np.array(normalizer_used, dtype=np.uint8))
@@ -742,8 +790,11 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
     print("    Closer to ref:  mean L1 dist to ref  before: {:.4f}  after: {:.4f}  (lower after = better)".format(dist_before, dist_after))
     print("    Color preserved:  mean R before/after: {:.4f} / {:.4f}   pink_pct (R>B) before/after: {:.4f} / {:.4f}  (no big drop = pink not lost)".format(
         mean_r_before, mean_r_after, mean_pink_before, mean_pink_after))
-    print("    Purple (percentile-based): thresh mean_r={:.4f}, pink_pct={:.4f} -> {} patches replaced with luminosity-only (stored data)".format(
-        thresh_mean_r, thresh_pink_pct, len(purple_fallback_indices)))
+    if stain_mode == "adaptive":
+        print("    Purple (percentile-based): thresh mean_r={:.4f}, pink_pct={:.4f} -> {} patches replaced with luminosity-only (stored data)".format(
+            thresh_mean_r, thresh_pink_pct, len(purple_fallback_indices)))
+    else:
+        print("    Purple replacement: disabled in macenko benchmark-style mode")
     print("    Sample purple count (fixed 0.2/0.05): {} / {}  (reference only; stored data uses percentile)".format(
         int(purple_only_after), len(after_r)))
     print("  Step 3 (value) effectiveness (sample n={}): min={:.4f}, max={:.4f}, mean={:.4f}  (expect [0,1])".format(
@@ -774,11 +825,11 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
         "qa_samples_file": os.path.basename(qa_path) if qa_path else None,
         "step1_removed": {"solid_color": n_solid, "high_black": n_black, "low_tissue": n_low_tissue},
         "step2_normalizer_usage": usage,
-        "step2_blue_dom_threshold": float(blue_dom_threshold),
+        "step2_blue_dom_threshold": float(blue_dom_threshold) if blue_dom_threshold is not None else None,
         "step2_purple_fallback_count": len(purple_fallback_indices),
         "step2_purple_percentile": PURPLE_PERCENTILE,
-        "step2_purple_thresh_mean_r": float(thresh_mean_r),
-        "step2_purple_thresh_pink_pct": float(thresh_pink_pct),
+        "step2_purple_thresh_mean_r": float(thresh_mean_r) if thresh_mean_r is not None else None,
+        "step2_purple_thresh_pink_pct": float(thresh_pink_pct) if thresh_pink_pct is not None else None,
         "step2_sample_dist_before": float(dist_before),
         "step2_sample_dist_after": float(dist_after),
         "step2_sample_mean_r_before": mean_r_before,
@@ -795,6 +846,7 @@ def process_split(split_name, x_path, y_path, out_dir, macenko, reinhard, ref_me
         "step2_multi_ref_merge_patch_idx": MULTI_REF_MERGE_PATCH_IDX if stain_router is not None else None,
         "step2_multi_ref_merge_cluster": int(stain_router["merge_cluster"]) if stain_router is not None else None,
         "step2_multi_ref_cluster_to_pack": {str(k): int(v) for k, v in stain_router["cluster_to_pack"].items()} if stain_router is not None else None,
+        "step2_stain_method": stain_mode,
     }
 
 
@@ -830,10 +882,12 @@ def main():
                         help="Resume from checkpoints: skip Step 1 if checkpoint exists; skip a split entirely if its output H5 already exists.")
     parser.add_argument("--status", action="store_true",
                         help="Only inspect preprocessed/ state (checkpoints and output H5) and print what finished / what to do. Use after an interrupted run.")
-    parser.add_argument("--preprocessed-subdir", type=str, default="preprocessed",
+    parser.add_argument("--preprocessed-subdir", type=str, default="preprocessed_macenko_benchmark_style",
                         help="Output folder under data_dir (default: preprocessed). Use e.g. preprocessed_multi_ref to keep separate from a prior run.")
     parser.add_argument("--stain-multi-ref", action="store_true",
                         help="Use 3 fixed references + KMeans routing; cluster matching patch %d maps to closest ref by hue (mean RGB)." % MULTI_REF_MERGE_PATCH_IDX)
+    parser.add_argument("--stain-mode", type=str, default="macenko", choices=("adaptive", "macenko"),
+                        help="adaptive: current Macenko/Reinhard routing + purple replacement. macenko: benchmark-style classical Macenko only.")
     args = parser.parse_args()
     PURPLE_PERCENTILE = float(args.purple_percentile)
     BLUE_DOM_PERCENTILE = float(args.blue_dom_percentile)
@@ -880,6 +934,9 @@ def main():
     ref_config_path = args.ref_config or os.path.join(PROJECT_ROOT, "experiments", "stain_reference", "stain_reference.json")
     if not args.stain_multi_ref and not os.path.isfile(ref_config_path):
         print("Error: ref_config not found:", ref_config_path)
+        sys.exit(1)
+    if args.stain_multi_ref and args.stain_mode != "adaptive":
+        print("Error: --stain-multi-ref is only supported with --stain-mode adaptive.")
         sys.exit(1)
 
     dedup_dir = args.dedup_dir
@@ -977,19 +1034,20 @@ def main():
         manifest = {
             "train": process_split("train", train_x_path, train_y_path, out_dir, macenko, reinhard, ref_mean_rgb,
                                    candidate_indices=candidate_indices_per_split.get("train") if candidate_indices_per_split else None, resume=args.resume,
-                                   stain_router=stain_router, ref_packs=ref_packs),
+                                   stain_router=stain_router, ref_packs=ref_packs, stain_mode=args.stain_mode),
             "valid": process_split("valid", valid_x_path, valid_y_path, out_dir, macenko, reinhard, ref_mean_rgb,
                                    candidate_indices=candidate_indices_per_split.get("valid") if candidate_indices_per_split else None, resume=args.resume,
-                                   stain_router=stain_router, ref_packs=ref_packs),
+                                   stain_router=stain_router, ref_packs=ref_packs, stain_mode=args.stain_mode),
             "test": process_split("test", test_x_path, test_y_path, out_dir, macenko, reinhard, ref_mean_rgb,
                                   candidate_indices=candidate_indices_per_split.get("test") if candidate_indices_per_split else None, resume=args.resume,
-                                  stain_router=stain_router, ref_packs=ref_packs),
+                                  stain_router=stain_router, ref_packs=ref_packs, stain_mode=args.stain_mode),
         }
 
     manifest["config"] = {
         "data_dir": data_dir,
         "preprocessed_subdir": args.preprocessed_subdir,
         "dedup_dir": os.path.abspath(args.dedup_dir) if args.dedup_dir else None,
+        "stain_mode": args.stain_mode,
         "stain_multi_ref": bool(args.stain_multi_ref),
         "multi_ref_indices": list(MULTI_REF_INDICES) if args.stain_multi_ref else None,
         "multi_ref_merge_patch_idx": MULTI_REF_MERGE_PATCH_IDX if args.stain_multi_ref else None,
