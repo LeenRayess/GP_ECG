@@ -22,18 +22,6 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 try:
-    from tqdm.auto import tqdm
-except ImportError:
-    try:
-        from tqdm import tqdm
-    except ImportError:
-        def tqdm(x, desc=None, **kwargs):
-            return x
-
-# Colab/Jupyter: avoid one-line-per-step spam (reduces UI freeze from huge logs)
-_TQDM_KW = {"mininterval": 2.0, "miniters": 10}
-
-try:
     from sklearn.metrics import (
         average_precision_score,
         brier_score_loss,
@@ -48,6 +36,21 @@ BATCH_SIZE = 64
 EMBED_DIM = 2560
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
+
+
+def _pct_milestones_crossed(batch_1based: int, n_batches: int, printed: set) -> List[int]:
+    """Newly crossed 10%..100%% batch milestones; mutates printed."""
+    out: List[int] = []
+    if n_batches <= 0:
+        return out
+    frac = batch_1based / float(n_batches)
+    for k in range(10, 101, 10):
+        if k in printed:
+            continue
+        if frac + 1e-12 >= k / 100.0:
+            printed.add(k)
+            out.append(k)
+    return out
 
 
 class PreprocessedPCamDataset(Dataset):
@@ -254,11 +257,16 @@ def collect_logits_labels(
     model.eval()
     logits_list: List[torch.Tensor] = []
     labels_list: List[torch.Tensor] = []
-    for x, y in tqdm(loader, desc=desc, leave=False, unit="batch", **_TQDM_KW):
+    n_batches = len(loader)
+    printed: set = set()
+    for batch_idx, (x, y) in enumerate(loader):
         x = x.to(device)
         logits = model.forward_logits(x, mc_dropout=False)
         logits_list.append(logits.cpu())
         labels_list.append(y)
+        b = batch_idx + 1
+        for pct in _pct_milestones_crossed(b, n_batches, printed):
+            print("  [{}] {}%  batch {}/{}".format(desc, pct, b, n_batches))
     logits_np = torch.cat(logits_list, dim=0).numpy()
     labels_np = torch.cat(labels_list, dim=0).numpy().reshape(-1)
     return logits_np, labels_np
@@ -277,17 +285,17 @@ def collect_mc_dropout_probs(
     all_means = []
     for si in range(n_samples):
         logits_list: List[torch.Tensor] = []
-        for x, _ in tqdm(
-            loader,
-            desc="{} sample {}/{}".format(desc, si + 1, n_samples),
-            leave=False,
-            unit="batch",
-            **_TQDM_KW,
-        ):
+        n_batches = len(loader)
+        printed: set = set()
+        tag = "{} sample {}/{}".format(desc, si + 1, n_samples)
+        for batch_idx, (x, _) in enumerate(loader):
             x = x.to(device)
             with torch.no_grad():
                 lg = model.forward_logits(x, mc_dropout=True)
             logits_list.append(lg.cpu())
+            b = batch_idx + 1
+            for pct in _pct_milestones_crossed(b, n_batches, printed):
+                print("  [{}] {}%  batch {}/{}".format(tag, pct, b, n_batches))
         logits_ep = torch.cat(logits_list, dim=0)
         prob_ep = torch.sigmoid(logits_ep).numpy().reshape(-1)
         all_means.append(prob_ep)
@@ -305,22 +313,15 @@ def train_one_epoch(
     device,
     epoch,
     total_epochs,
-    log_every_batches=200,
 ):
     model.train()
     total_loss = 0.0
     correct = 0
     n = 0
     n_batches = len(loader)
-    pbar = tqdm(
-        loader,
-        desc="Epoch {}/{} train".format(epoch + 1, total_epochs),
-        leave=True,
-        unit="batch",
-        **_TQDM_KW,
-    )
-
-    for batch_idx, (x, y) in enumerate(pbar):
+    tag = "Epoch {}/{} train".format(epoch + 1, total_epochs)
+    printed: set = set()
+    for batch_idx, (x, y) in enumerate(loader):
         x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
         logits = model(x)
@@ -328,18 +329,21 @@ def train_one_epoch(
         loss.backward()
         optimizer.step()
 
-        b = x.size(0)
-        total_loss += loss.item() * b
+        bsz = x.size(0)
+        total_loss += loss.item() * bsz
         pred = (torch.sigmoid(logits) >= 0.5).float()
         correct += (pred == y).sum().item()
-        n += b
+        n += bsz
 
         running_loss = total_loss / max(n, 1)
         running_acc = correct / max(n, 1)
-        pbar.set_postfix(loss="{:.4f}".format(running_loss), acc="{:.4f}".format(running_acc))
-
-        if log_every_batches and (batch_idx + 1) % log_every_batches == 0:
-            print("  [train] batch {}/{}  loss: {:.4f}  acc: {:.4f}".format(batch_idx + 1, n_batches, running_loss, running_acc))
+        bi = batch_idx + 1
+        for pct in _pct_milestones_crossed(bi, n_batches, printed):
+            print(
+                "  [{}] {}%  batch {}/{}  loss: {:.4f}  acc: {:.4f}".format(
+                    tag, pct, bi, n_batches, running_loss, running_acc
+                )
+            )
 
     return total_loss / max(n, 1), correct / max(n, 1)
 
@@ -358,8 +362,10 @@ def evaluate_epoch(
     n = 0
     all_logits: List[torch.Tensor] = []
     all_labels: List[torch.Tensor] = []
+    n_batches = len(loader)
+    printed: set = set()
 
-    for x, y in tqdm(loader, desc=desc, leave=False, unit="batch", **_TQDM_KW):
+    for batch_idx, (x, y) in enumerate(loader):
         x, y = x.to(device), y.to(device)
         logits = model.forward_logits(x, mc_dropout=False)
         loss = F.binary_cross_entropy_with_logits(logits, y)
@@ -370,6 +376,15 @@ def evaluate_epoch(
         n += x.size(0)
         all_logits.append(logits.cpu())
         all_labels.append(y.cpu())
+        bi = batch_idx + 1
+        running_loss = total_loss / max(n, 1)
+        running_acc = correct / max(n, 1)
+        for pct in _pct_milestones_crossed(bi, n_batches, printed):
+            print(
+                "  [{}] {}%  batch {}/{}  loss: {:.4f}  acc: {:.4f}".format(
+                    desc, pct, bi, n_batches, running_loss, running_acc
+                )
+            )
 
     logits_np = torch.cat(all_logits, dim=0).numpy().reshape(-1)
     labels_np = torch.cat(all_labels, dim=0).numpy().reshape(-1)
@@ -534,7 +549,6 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--resume", action="store_true", help="Resume from checkpoint_last.pt in --out-dir")
     parser.add_argument("--num-workers", type=int, default=2, help="DataLoader workers (Colab typically 2-4)")
-    parser.add_argument("--log-every", type=int, default=200, help="Print train progress every N batches")
     parser.add_argument("--save-every-epoch-copy", action="store_true", help="Also save checkpoints/checkpoint_epoch_XXX.pt")
     parser.add_argument(
         "--head-dropout",
@@ -685,19 +699,13 @@ def main():
         start_epoch + 1, args.epochs, len(train_ds), len(valid_ds)
     ))
 
-    for epoch in tqdm(
-        range(start_epoch, args.epochs),
-        desc="Epochs",
-        unit="epoch",
-        leave=True,
-        **_TQDM_KW,
-    ):
+    for epoch in range(start_epoch, args.epochs):
         print("\n" + "=" * 60)
         print("Epoch {}/{}".format(epoch + 1, args.epochs))
         print("=" * 60)
 
         train_loss, train_acc = train_one_epoch(
-            model, train_loader, criterion, optimizer, device, epoch, args.epochs, log_every_batches=args.log_every
+            model, train_loader, criterion, optimizer, device, epoch, args.epochs
         )
         val_loss, val_acc, val_cm, val_metrics = evaluate_epoch(
             model, valid_loader, device, desc="Epoch {}/{} val".format(epoch + 1, args.epochs)
