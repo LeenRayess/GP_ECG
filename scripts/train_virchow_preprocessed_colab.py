@@ -22,10 +22,16 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 try:
-    from tqdm import tqdm
+    from tqdm.auto import tqdm
 except ImportError:
-    def tqdm(x, desc=None, **kwargs):
-        return x
+    try:
+        from tqdm import tqdm
+    except ImportError:
+        def tqdm(x, desc=None, **kwargs):
+            return x
+
+# Colab/Jupyter: avoid one-line-per-step spam (reduces UI freeze from huge logs)
+_TQDM_KW = {"mininterval": 2.0, "miniters": 10}
 
 try:
     from sklearn.metrics import (
@@ -248,7 +254,7 @@ def collect_logits_labels(
     model.eval()
     logits_list: List[torch.Tensor] = []
     labels_list: List[torch.Tensor] = []
-    for x, y in tqdm(loader, desc=desc, leave=False, unit="batch"):
+    for x, y in tqdm(loader, desc=desc, leave=False, unit="batch", **_TQDM_KW):
         x = x.to(device)
         logits = model.forward_logits(x, mc_dropout=False)
         logits_list.append(logits.cpu())
@@ -276,6 +282,7 @@ def collect_mc_dropout_probs(
             desc="{} sample {}/{}".format(desc, si + 1, n_samples),
             leave=False,
             unit="batch",
+            **_TQDM_KW,
         ):
             x = x.to(device)
             with torch.no_grad():
@@ -305,7 +312,13 @@ def train_one_epoch(
     correct = 0
     n = 0
     n_batches = len(loader)
-    pbar = tqdm(loader, desc="Epoch {}/{} train".format(epoch + 1, total_epochs), leave=True, unit="batch")
+    pbar = tqdm(
+        loader,
+        desc="Epoch {}/{} train".format(epoch + 1, total_epochs),
+        leave=True,
+        unit="batch",
+        **_TQDM_KW,
+    )
 
     for batch_idx, (x, y) in enumerate(pbar):
         x, y = x.to(device), y.to(device)
@@ -346,7 +359,7 @@ def evaluate_epoch(
     all_logits: List[torch.Tensor] = []
     all_labels: List[torch.Tensor] = []
 
-    for x, y in tqdm(loader, desc=desc, leave=False, unit="batch"):
+    for x, y in tqdm(loader, desc=desc, leave=False, unit="batch", **_TQDM_KW):
         x, y = x.to(device), y.to(device)
         logits = model.forward_logits(x, mc_dropout=False)
         loss = F.binary_cross_entropy_with_logits(logits, y)
@@ -672,7 +685,13 @@ def main():
         start_epoch + 1, args.epochs, len(train_ds), len(valid_ds)
     ))
 
-    for epoch in tqdm(range(start_epoch, args.epochs), desc="Epochs", unit="epoch", leave=True):
+    for epoch in tqdm(
+        range(start_epoch, args.epochs),
+        desc="Epochs",
+        unit="epoch",
+        leave=True,
+        **_TQDM_KW,
+    ):
         print("\n" + "=" * 60)
         print("Epoch {}/{}".format(epoch + 1, args.epochs))
         print("=" * 60)
