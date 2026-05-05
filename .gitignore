@@ -11,6 +11,9 @@ ENV/
 env/
 .venv_clean/
 
+data/wilds/
+virchow_pcam_runs/
+
 # IDE
 .idea/
 .vscode/

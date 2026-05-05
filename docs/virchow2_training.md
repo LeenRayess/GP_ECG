@@ -11,7 +11,7 @@
 ## Data
 
 - **Source:** Preprocessed PCam under `pcam_data/<subdir>/` (default `preprocessed/`): `train_x.h5`, `train_y.h5`, `valid_x.h5`, `valid_y.h5`. Patches are 96×96, float32, in [0, 1] (after quality filter, stain normalization, value normalization).
-- **Multi-reference run:** If you used `scripts/preprocess_pcam_to_h5.py --stain-multi-ref --preprocessed-subdir preprocessed_multi_ref`, point training at that folder, e.g. `--preprocessed-dir pcam_data/preprocessed_multi_ref`.
+- **Multi-reference run:** If you used `scripts/preprocess_histopath_h5.py --stain-multi-ref --preprocessed-subdir preprocessed_multi_ref`, point training at that folder, e.g. `--preprocessed-dir pcam_data/preprocessed_multi_ref`.
 - **At train time:** Each patch is resized to 224×224 with **bicubic** interpolation, then normalized with ImageNet mean/std (as required by Virchow2). No extra augmentation in the script.
 
 ## Checkpoint system

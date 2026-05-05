@@ -1,4 +1,4 @@
-"""Train a frozen Virchow2 backbone + linear head on H5 from preprocess_pcam_to_h5.
+"""Train a frozen Virchow2 backbone + linear head on H5 from preprocess_histopath_h5.
 
 Expects train_x/y.h5 and valid_x/y.h5 (96×96 float [0,1]); loader resizes to 224 and ImageNet-normalizes.
 Checkpoint: out-dir/checkpoint.pt; --resume continues. Gated model: HF_TOKEN or huggingface-cli login."""

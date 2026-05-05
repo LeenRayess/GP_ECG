@@ -26,7 +26,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-import preprocess_pcam_to_h5 as pp
+import preprocess_histopath_h5 as pp
 
 try:
     from tqdm import tqdm
