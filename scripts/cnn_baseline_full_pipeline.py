@@ -44,12 +44,15 @@ Colab: set repo root (data under same tree), then run the same module, e.g.
   export GP_ECG_ROOT=/content/GP_ECG
   python scripts/cnn_baseline_full_pipeline.py --repo-root /content/GP_ECG
 
-Progress: prints at 10%, 20%, …, 100% of batches (no tqdm). DataLoader always uses
-num_workers=0. Default train/eval batch size is 320. Default --epochs is 10 so the
-optimization budget matches `train_virchow_preprocessed_colab` (frozen encoder + head).
+Progress: same batch milestone style as `train_virchow_preprocessed_colab` (batch 1 start,
+then 10%, 20%, …, 100% with loss/acc on train), plus explicit `[cnn_baseline] step:` phase
+lines for each arm, val passes, temperature fit, and eval. DataLoader uses num_workers=0.
+Default train/eval batch size is 320; default --epochs is 10.
 """
 
 from __future__ import annotations
+
+print("[cnn_baseline] module: stdlib next, then numpy/torch (Colab: first load can take minutes)…", flush=True)
 
 import argparse
 import json
@@ -62,6 +65,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+print("[cnn_baseline] importing numpy, torch…", flush=True)
 import numpy as np
 import torch
 import torch.nn as nn
@@ -76,11 +80,24 @@ _SCRIPTS_DIR = _SCRIPT_FILE.parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
+print("[cnn_baseline] importing metrics helpers from train_virchow_preprocessed_colab…", flush=True)
 from train_virchow_preprocessed_colab import (  # noqa: E402
+    _pct_milestones_crossed,
     compute_classification_metrics,
     expected_calibration_error,
     fit_temperature_binary,
 )
+
+print("[cnn_baseline] imports finished.", flush=True)
+
+
+def _banner(title: str) -> None:
+    line = "=" * 60
+    print(f"\n{line}\n{title}\n{line}", flush=True)
+
+
+def _step(msg: str) -> None:
+    print(f"[cnn_baseline] step: {msg}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -291,26 +308,6 @@ def _collate_xy(batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.T
     return xs, ys
 
 
-class BatchProgressReporter:
-    """Print at most once per batch when completed fraction crosses a 10% bucket."""
-
-    def __init__(self, desc: str) -> None:
-        self.desc = desc
-        self._prev_pct = -1
-
-    def step(self, batch_1based: int, n_batches: int, **extra: Any) -> None:
-        n_batches = max(1, n_batches)
-        pct = int(100 * batch_1based / n_batches)
-        if pct // 10 > self._prev_pct // 10 and pct >= 10:
-            milestone = min(100, max(10, (pct // 10) * 10))
-            extra_s = " ".join(f"{k}={v}" for k, v in extra.items())
-            msg = f"[{self.desc}] ~{milestone}% ({batch_1based}/{n_batches} batches)"
-            if extra_s:
-                msg += "  " + extra_s
-            print(msg, flush=True)
-        self._prev_pct = pct
-
-
 # ---------------------------------------------------------------------------
 # Metrics / calibration
 # ---------------------------------------------------------------------------
@@ -338,13 +335,16 @@ def collect_logits(
     logits_list: List[np.ndarray] = []
     labels_list: List[np.ndarray] = []
     n_batches = len(loader)
-    prog = BatchProgressReporter(desc)
+    printed: set = set()
     for batch_idx, (xb, yb) in enumerate(loader, start=1):
         xb = xb.to(device, non_blocking=True)
         logits = model(xb).squeeze(-1)
         logits_list.append(logits.detach().float().cpu().numpy())
         labels_list.append(yb.numpy().reshape(-1))
-        prog.step(batch_idx, n_batches)
+        if batch_idx == 1:
+            print(f"  [{desc}] batch 1/{n_batches} start", flush=True)
+        for pct in _pct_milestones_crossed(batch_idx, n_batches, printed):
+            print(f"  [{desc}] {pct}%  batch {batch_idx}/{n_batches}", flush=True)
     return np.concatenate(logits_list), np.concatenate(labels_list)
 
 
@@ -421,6 +421,7 @@ def train_one_arm(
     seed: int,
     resume: bool,
 ) -> Dict[str, Any]:
+    _step(f"arm={sp.arm_name} validate H5 paths exist")
     _require_paths(sp)
     out_dir.mkdir(parents=True, exist_ok=True)
     _set_seeds(seed)
@@ -445,12 +446,16 @@ def train_one_arm(
             "test_y": str(sp.test_y),
         },
     }
+    _step(f"arm={sp.arm_name} write hparams.json -> {out_dir / 'hparams.json'}")
     _atomic_json_dump(out_dir / "hparams.json", hparams)
 
     pin = device.type == "cuda"
     reopen = NUM_WORKERS > 0
+    _step(f"arm={sp.arm_name} open train HDF5 (may block on slow disk): {sp.train_x}")
     train_ds = H5PatchDataset(sp.train_x, sp.train_y, sp.input_kind, reopen_each_sample=reopen)
+    _step(f"arm={sp.arm_name} open val HDF5: {sp.val_x}")
     val_ds = H5PatchDataset(sp.val_x, sp.val_y, sp.input_kind, reopen_each_sample=reopen)
+    _step(f"arm={sp.arm_name} build DataLoaders (n_train={len(train_ds)} n_val={len(val_ds)})")
     train_loader = DataLoader(
         train_ds,
         batch_size=batch_size,
@@ -471,6 +476,13 @@ def train_one_arm(
         collate_fn=_collate_xy,
     )
 
+    print(
+        f"[{sp.arm_name}] DataLoaders ready: train_batches={len(train_loader)} "
+        f"val_batches={len(val_loader)} (first train batch may be slow from disk)",
+        flush=True,
+    )
+
+    _step(f"arm={sp.arm_name} init BaselineCNN + Adam on {device}")
     model = BaselineCNN().to(device)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     crit = nn.BCEWithLogitsLoss()
@@ -481,21 +493,31 @@ def train_one_arm(
 
     last_ckpt = out_dir / "last_checkpoint.pt"
     if resume and last_ckpt.is_file():
+        _step(f"arm={sp.arm_name} load resume checkpoint {last_ckpt}")
         ck = torch.load(last_ckpt, map_location=device)
         model.load_state_dict(ck["model_state_dict"])
         opt.load_state_dict(ck["optimizer_state_dict"])
         start_epoch = int(ck.get("next_epoch", 0))
         best_auc = float(ck.get("best_val_auc", -1.0))
         history = ck.get("history", [])
-        print(f"[{sp.arm_name}] Resuming from epoch {start_epoch + 1} (0-based resume index).")
+        print(f"[{sp.arm_name}] Resuming from epoch {start_epoch + 1} (0-based resume index).", flush=True)
+
+    print(
+        f"\nTraining epochs {start_epoch + 1}..{epochs} (inclusive), "
+        f"train samples: {len(train_ds)}, val samples: {len(val_ds)}",
+        flush=True,
+    )
 
     for epoch in range(start_epoch, epochs):
+        _banner(f"{sp.arm_name}  Epoch {epoch + 1}/{epochs}")
         model.train()
         running_loss = 0.0
         n_seen = 0
         correct = 0
         n_batches = len(train_loader)
-        prog = BatchProgressReporter(f"{sp.arm_name} train ep{epoch+1}/{epochs}")
+        tag = f"{sp.arm_name} train ep{epoch+1}/{epochs}"
+        printed: set = set()
+        _step(f"arm={sp.arm_name} epoch {epoch+1} train loop start ({n_batches} batches)")
         for batch_idx, (xb, yb) in enumerate(train_loader, start=1):
             xb = xb.to(device, non_blocking=True)
             yb = yb.to(device, non_blocking=True)
@@ -509,16 +531,23 @@ def train_one_arm(
             n_seen += bs
             pred = (torch.sigmoid(logits) >= 0.5).float()
             correct += int((pred == yb).sum().item())
-            prog.step(
-                batch_idx,
-                n_batches,
-                loss=f"{running_loss / max(n_seen, 1):.4f}",
-                acc=f"{correct / max(n_seen, 1):.4f}",
-            )
+            rloss = running_loss / max(n_seen, 1)
+            racc = correct / max(n_seen, 1)
+            if batch_idx == 1:
+                print(
+                    f"  [{tag}] batch 1/{n_batches} start  loss: {rloss:.4f}  acc: {racc:.4f}",
+                    flush=True,
+                )
+            for pct in _pct_milestones_crossed(batch_idx, n_batches, printed):
+                print(
+                    f"  [{tag}] {pct}%  batch {batch_idx}/{n_batches}  loss: {rloss:.4f}  acc: {racc:.4f}",
+                    flush=True,
+                )
 
         train_loss = running_loss / max(n_seen, 1)
         train_acc = correct / max(n_seen, 1)
 
+        _step(f"arm={sp.arm_name} epoch {epoch+1} val logits (per-epoch validation)")
         val_logits, val_y = collect_logits(model, val_loader, device, desc=f"{sp.arm_name} val ep{epoch+1}")
         val_prob = _sigmoid_stable(val_logits)
         val_auc = _auc_only(val_y, val_prob)
@@ -535,8 +564,10 @@ def train_one_arm(
         if not math.isnan(val_auc) and val_auc > best_auc:
             best_auc = val_auc
             torch.save(model.state_dict(), out_dir / "weights_best_val_auc.pt")
+            print(f"  [{sp.arm_name}] -> new best val ROC-AUC, saved weights_best_val_auc.pt", flush=True)
 
         ep_path = out_dir / f"weights_epoch_{epoch + 1:03d}.pt"
+        _step(f"arm={sp.arm_name} epoch {epoch+1} save weights + last_checkpoint")
         torch.save(
             {
                 "epoch": epoch + 1,
@@ -558,16 +589,20 @@ def train_one_arm(
             last_ckpt,
         )
         print(
-            f"[{sp.arm_name}] epoch {epoch+1}/{epochs}  train_loss={train_loss:.4f}  "
-            f"train_acc={train_acc:.4f}  val_auc={val_auc:.4f}  best_val_auc={best_auc:.4f}"
+            f"\n  [{sp.arm_name}] Epoch {epoch+1} summary: train_loss={train_loss:.4f}  "
+            f"train_acc={train_acc:.4f}  val_auc={val_auc:.4f}  best_val_auc={best_auc:.4f}",
+            flush=True,
         )
 
     # Temperature on val with best weights
     best_w = out_dir / "weights_best_val_auc.pt"
     if not best_w.is_file():
         torch.save(model.state_dict(), best_w)
+    _step(f"arm={sp.arm_name} load best weights for temperature fit: {best_w}")
     model.load_state_dict(torch.load(best_w, map_location=device))
+    _step(f"arm={sp.arm_name} collect val logits for temperature grid search")
     val_logits, val_y = collect_logits(model, val_loader, device, desc=f"{sp.arm_name} val (temperature fit)")
+    _step(f"arm={sp.arm_name} fit_temperature_binary (n_val={len(val_y)})")
     tinfo = fit_temperature_binary(val_logits, val_y.astype(np.float64), grid=80)
     T = float(tinfo["temperature"])
     _atomic_json_dump(
@@ -581,6 +616,8 @@ def train_one_arm(
             "nll_after_T_mean": tinfo.get("nll_after_T_mean"),
         },
     )
+    print(f"[{sp.arm_name}] temperature T={T:.4f}  wrote temperature_fit.json", flush=True)
+    _step(f"arm={sp.arm_name} training arm complete out_dir={out_dir}")
 
     return {"temperature": T, "best_val_auc": best_auc, "out_dir": str(out_dir)}
 
@@ -600,6 +637,7 @@ def evaluate_all(
     batch_size: int,
 ) -> Dict[str, Any]:
     """Each trained arm: in-domain + cross-domain tests (matched preprocessing)."""
+    _banner("EVALUATION: in-domain + external test (per trained arm)")
     pin = device.type == "cuda"
     out_eval = run_dir / "evaluation"
     out_eval.mkdir(parents=True, exist_ok=True)
@@ -636,15 +674,22 @@ def evaluate_all(
         ("cam17_preprocessed", "cam17_preprocessed", "pcam_preprocessed"),
     ]
 
-    for train_arm, in_key, ext_key in plan:
+    for bi, (train_arm, in_key, ext_key) in enumerate(plan, start=1):
         ckpt = run_dir / train_arm / "weights_best_val_auc.pt"
+        _banner(f"EVAL block {bi}/4 — model trained as: {train_arm}")
+        _step(f"load checkpoint {ckpt}")
         T = float(temperatures[train_arm])
         model = _load_model_for_eval(ckpt, device)
         block: Dict[str, Any] = {"trained_arm": train_arm, "temperature": T, "tests": {}}
 
         for tag, surf_key in (("in_domain_test", in_key), ("external_test", ext_key)):
             sp = test_surfaces[surf_key]
+            _step(f"eval {train_arm} -> {tag}  surface={surf_key}  test_x={sp.test_x.name}")
             loader = make_loader(sp, "test")
+            _step(
+                f"eval {train_arm} -> {tag}  n_samples={len(loader.dataset)}  "
+                f"batches={len(loader)}  T={T:.4f}"
+            )
             logits, y = collect_logits(model, loader, device, desc=f"eval {train_arm} -> {tag}")
             block["tests"][tag] = {
                 "surface": surf_key,
@@ -654,6 +699,7 @@ def evaluate_all(
                 },
                 **_eval_split(logits, y, T),
             }
+            _step(f"eval {train_arm} -> {tag}  done (ROC-AUC cal in metrics block)")
 
         # Transfer deltas on calibrated ROC-AUC / PR-AUC (higher better)
         m_in = block["tests"]["in_domain_test"]["metrics_prob_after_temperature_threshold_0p5"].get("roc_auc")
@@ -677,13 +723,16 @@ def evaluate_all(
             "pr_auc": dh(pr_in, pr_ex),
         }
         results[train_arm] = block
+        print(f"[cnn_baseline] finished eval block for trained_arm={train_arm}", flush=True)
 
+    _step(f"write {out_eval / 'metrics_all.json'}")
     _atomic_json_dump(out_eval / "metrics_all.json", _json_safe(results))
 
     # CSV summary
     import csv
 
     csv_path = out_eval / "metrics_summary.csv"
+    _step(f"write {csv_path}")
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(
@@ -715,23 +764,24 @@ def evaluate_all(
                         ece.get("ece"),
                     ]
                 )
+    _step("evaluation CSV complete")
     return results
 
 
 def _print_gpu_banner() -> torch.device:
-    print("=== GPU / device check ===")
-    print("torch:", torch.__version__)
-    print("torch.version.cuda:", getattr(torch.version, "cuda", None))
+    print("=== GPU / device check ===", flush=True)
+    print("torch:", torch.__version__, flush=True)
+    print("torch.version.cuda:", getattr(torch.version, "cuda", None), flush=True)
     cuda_ok = torch.cuda.is_available()
     if cuda_ok:
-        print("CUDA: available")
-        print("device[0]:", torch.cuda.get_device_name(0))
-        print("device_count:", torch.cuda.device_count())
+        print("CUDA: available", flush=True)
+        print("device[0]:", torch.cuda.get_device_name(0), flush=True)
+        print("device_count:", torch.cuda.device_count(), flush=True)
     else:
-        print("CUDA: not available — training will use CPU (very slow).")
+        print("CUDA: not available — training will use CPU (very slow).", flush=True)
     device = torch.device("cuda" if cuda_ok else "cpu")
-    print("Selected device:", device)
-    print("==========================\n")
+    print("Selected device:", device, flush=True)
+    print("==========================\n", flush=True)
     return device
 
 
@@ -774,6 +824,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    print(
+        f"[cnn_baseline] main() starting {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} UTC",
+        flush=True,
+    )
+
     device = _print_gpu_banner()
 
     repo = _resolve_repo_root(Path(args.repo_root) if args.repo_root else None)
@@ -792,10 +847,15 @@ def main() -> None:
     ]
     arms: Dict[str, SplitPaths] = {sp.arm_name: sp for sp in arms_list}
     for sp in arms_list:
+        _step(f"verify H5 paths for arm={sp.arm_name}")
         _require_paths(sp)
 
+    print("[cnn_baseline] paths OK; writing manifest (opens each train_y H5 once for counts)…", flush=True)
     manifest_path = run_dir / "run_manifest.json"
     if not (args.skip_train and manifest_path.is_file()):
+        for sp in arms_list:
+            c = _split_counts(sp)
+            _step(f"manifest counts {sp.arm_name}: {c}")
         manifest = {
             "run_id": run_id,
             "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -810,13 +870,15 @@ def main() -> None:
             "cli": vars(args),
         }
         _atomic_json_dump(manifest_path, manifest)
+        _step(f"wrote manifest {manifest_path}")
     else:
-        print(f"[info] Keeping existing {manifest_path} (--skip-train).")
+        print(f"[info] Keeping existing {manifest_path} (--skip-train).", flush=True)
 
     temperatures: Dict[str, float] = {}
 
     if not args.skip_train:
-        for sp in arms_list:
+        for ai, sp in enumerate(arms_list, start=1):
+            _banner(f"TRAINING ARM {ai}/4: {sp.arm_name}")
             a_dir = run_dir / sp.arm_name
             info = train_one_arm(
                 sp,
@@ -829,8 +891,9 @@ def main() -> None:
                 resume=args.resume,
             )
             temperatures[sp.arm_name] = float(info["temperature"])
+        _banner("All 4 training arms finished")
     else:
-        # load temperatures from disk
+        _step("--skip-train: loading temperature_fit.json per arm")
         for sp in arms_list:
             p = run_dir / sp.arm_name / "temperature_fit.json"
             if not p.is_file():
@@ -846,8 +909,10 @@ def main() -> None:
             device=device,
             batch_size=args.eval_batch_size,
         )
-        print(f"\nWrote evaluation to: {run_dir / 'evaluation'}")
-    print(f"\nRun directory: {run_dir}")
+        print(f"\nWrote evaluation to: {run_dir / 'evaluation'}", flush=True)
+    else:
+        _step("--skip-eval set; skipping evaluate_all")
+    print(f"\nRun directory: {run_dir}", flush=True)
 
 
 if __name__ == "__main__":
