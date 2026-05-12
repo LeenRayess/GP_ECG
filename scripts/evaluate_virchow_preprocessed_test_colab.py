@@ -8,31 +8,9 @@ from __future__ import print_function
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any, Dict
-
-import numpy as np
-import torch
-from torch.utils.data import DataLoader
-
-try:
-    from timm.layers import SwiGLUPacked
-    import timm
-except ImportError:
-    timm = None
-    SwiGLUPacked = None
-
-from train_virchow_preprocessed_colab import (  # type: ignore
-    PreprocessedPCamDataset,
-    VirchowClassifier,
-    collect_logits_labels,
-    collect_mc_dropout_probs,
-    compute_classification_metrics,
-    expected_calibration_error,
-    print_confusion_and_metrics,
-)
 
 
 def _atomic_json_dump(path: Path, payload: Any) -> None:
@@ -43,6 +21,8 @@ def _atomic_json_dump(path: Path, payload: Any) -> None:
 
 
 def _json_safe(obj: Any) -> Any:
+    import numpy as np
+
     if isinstance(obj, dict):
         return {str(k): _json_safe(v) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -76,25 +56,6 @@ def _load_temperature(run_dir: Path) -> float:
         return 1.0
 
 
-def _load_model_weights(model: VirchowClassifier, run_dir: Path, device: torch.device) -> Path:
-    best = run_dir / "model_best.pt"
-    ckpt_last = run_dir / "checkpoint_last.pt"
-    ckpt_compat = run_dir / "checkpoint.pt"
-
-    if best.is_file():
-        state = torch.load(best, map_location=device)
-        model.load_state_dict(state, strict=False)
-        return best
-
-    for p in (ckpt_last, ckpt_compat):
-        if p.is_file():
-            state = torch.load(p, map_location=device)
-            if isinstance(state, dict) and "model_state_dict" in state:
-                model.load_state_dict(state["model_state_dict"], strict=False)
-                return p
-    raise FileNotFoundError("Could not find model weights in run dir.")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate reserved PCam test split with trained Virchow head.")
     parser.add_argument("--preprocessed-dir", type=str, required=True, help="Folder with test_x.h5 and test_y.h5")
@@ -106,9 +67,59 @@ def main() -> None:
     parser.add_argument("--no-save-test-preds", action="store_true", help="Skip writing test_predictions.npz.")
     args = parser.parse_args()
 
+    print("[evaluate_virchow] CLI OK; importing PyTorch / timm / helpers ...", flush=True)
+    print(
+        "[evaluate_virchow] First-time CUDA init + large imports often take 1–5+ min on Colab; not stuck yet.",
+        flush=True,
+    )
+
+    import numpy as np
+    import torch
+    from torch.utils.data import DataLoader
+
+    print("[evaluate_virchow] PyTorch import + CUDA init finished.", flush=True)
+
+    try:
+        from timm.layers import SwiGLUPacked
+        import timm
+    except ImportError:
+        timm = None
+        SwiGLUPacked = None
+
+    print("[evaluate_virchow] Loading dataset/metrics helpers from train_virchow_preprocessed_colab ...", flush=True)
+    from train_virchow_preprocessed_colab import (  # type: ignore
+        PreprocessedPCamDataset,
+        VirchowClassifier,
+        collect_logits_labels,
+        collect_mc_dropout_probs,
+        compute_classification_metrics,
+        expected_calibration_error,
+        print_confusion_and_metrics,
+    )
+
     if timm is None:
         print("Error: install timm and dependencies (pip install timm)")
         sys.exit(1)
+
+    print("[evaluate_virchow] Imports finished.", flush=True)
+
+    def _load_model_weights(model: VirchowClassifier, run_dir: Path, device: torch.device) -> Path:
+        best = run_dir / "model_best.pt"
+        ckpt_last = run_dir / "checkpoint_last.pt"
+        ckpt_compat = run_dir / "checkpoint.pt"
+
+        if best.is_file():
+            state = torch.load(best, map_location=device)
+            model.load_state_dict(state, strict=False)
+            return best
+
+        for p in (ckpt_last, ckpt_compat):
+            if p.is_file():
+                state = torch.load(p, map_location=device)
+                if isinstance(state, dict) and "model_state_dict" in state:
+                    model.load_state_dict(state["model_state_dict"], strict=False)
+                    return p
+        raise FileNotFoundError("Could not find model weights in run dir.")
 
     pre_dir = Path(args.preprocessed_dir)
     run_dir = Path(args.run_dir)
@@ -122,9 +133,9 @@ def main() -> None:
             sys.exit(1)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("Device:", device)
+    print("Device:", device, flush=True)
     if device.type == "cuda":
-        print("GPU:", torch.cuda.get_device_name(0))
+        print("GPU:", torch.cuda.get_device_name(0), flush=True)
 
     run_cfg = run_dir / "run_config.json"
     inferred_dropout = 0.0
@@ -136,8 +147,9 @@ def main() -> None:
         except Exception:
             inferred_dropout = 0.0
     head_dropout = inferred_dropout if args.head_dropout is None else float(args.head_dropout)
-    print("Head dropout:", head_dropout)
+    print("Head dropout:", head_dropout, flush=True)
 
+    print("[evaluate_virchow] Opening HDF5 test split ...", flush=True)
     test_ds = PreprocessedPCamDataset(str(test_x), str(test_y))
     test_loader = DataLoader(
         test_ds,
@@ -148,7 +160,7 @@ def main() -> None:
         persistent_workers=(args.num_workers > 0),
     )
 
-    print("Loading Virchow2 backbone (hf-hub:paige-ai/Virchow2) ...")
+    print("Loading Virchow2 backbone (hf-hub:paige-ai/Virchow2) ...", flush=True)
     backbone = timm.create_model(
         "hf-hub:paige-ai/Virchow2",
         pretrained=True,
@@ -158,7 +170,7 @@ def main() -> None:
     backbone = backbone.to(device).eval()
     model = VirchowClassifier(backbone, head_dropout_p=head_dropout).to(device)
     loaded_from = _load_model_weights(model, run_dir, device)
-    print("Loaded model weights from:", loaded_from)
+    print("Loaded model weights from:", loaded_from, flush=True)
 
     logits_np, labels_np = collect_logits_labels(model, test_loader, device, desc="test logits")
     logits_np = logits_np.reshape(-1)
@@ -187,7 +199,8 @@ def main() -> None:
             float(metrics_raw.get("roc_auc", float("nan"))),
             float(metrics_raw.get("average_precision", float("nan"))),
             float(metrics_raw.get("brier_score", float("nan"))),
-        )
+        ),
+        flush=True,
     )
 
     out: Dict[str, Any] = {
@@ -217,7 +230,7 @@ def main() -> None:
 
     out_json = run_dir / "test_metrics_detailed.json"
     _atomic_json_dump(out_json, _json_safe(out))
-    print("Wrote", out_json)
+    print("Wrote", out_json, flush=True)
 
     compact = {
         "n_test": int(len(labels_np)),
@@ -231,7 +244,7 @@ def main() -> None:
     }
     compact_json = run_dir / "test_metrics.json"
     _atomic_json_dump(compact_json, _json_safe(compact))
-    print("Wrote", compact_json)
+    print("Wrote", compact_json, flush=True)
 
     if not args.no_save_test_preds:
         npz_payload = {
@@ -247,8 +260,9 @@ def main() -> None:
             npz_payload["prob_mc_std"] = mc_std.astype(np.float32)
         out_npz = run_dir / "test_predictions.npz"
         np.savez_compressed(out_npz, **npz_payload)
-        print("Wrote", out_npz, "(arrays: {})".format(", ".join(npz_payload.keys())))
+        print("Wrote", out_npz, "(arrays: {})".format(", ".join(npz_payload.keys())), flush=True)
 
 
 if __name__ == "__main__":
+    print("[evaluate_virchow] script entry (__main__)", flush=True)
     main()

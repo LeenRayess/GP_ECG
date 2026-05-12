@@ -6,6 +6,19 @@ At the interim stage, three result blocks are available and sufficiently mature 
 
 ## 2. Data curation and preprocessing outcomes
 
+### 2.0 Integrity screening outcomes (PCam and CAMELYON17)
+
+PCam was deduplicated by hashing patch pixels and retaining one index per duplicate group, which reduced train from 262,144 to 220,025 patches, validation from 32,768 to 28,108, and test from 32,768 to 29,383. That pattern is expected when very many fixed crops are taken from whole-slide images and identical tiles occasionally recur in sparse or uniform tissue.
+
+On the preprocessed releases used here, CAMELYON17 and PCam were compared by exact pixel hash in both directions. Counting from CAMELYON17 into PCam yielded four overlapping train patches out of 296,294, none out of 34,389 validation patches, and one out of 83,181 test patches. Counting from PCam into CAMELYON17 yielded two overlapping train patches out of 208,355 and none in validation or test. Those rates support treating cross-dataset leakage as negligible. After the same preprocessing pipeline, exact internal duplicates in CAMELYON17 were three train patches and none in validation or test.
+
+Further removals used the same solid-color, high-black, and low-tissue gates applied uniformly to every split (see methodology Section 3.2). Class balance was recomputed after filtering, and all screening was completed before model training so that weights and metrics referred to a single frozen registry of patch indices.
+
+| Dataset | Stage input | Stage output | Total removed | Solid-color removed | High-black removed | Low-tissue removed |
+|---|---:|---:|---:|---:|---:|---:|
+| PCam | 277,516 | 262,574 | 14,942 | 2,478 | 13 | 12,451 |
+| CAMELYON17 | 422,394 | 413,864 | 8,530 | 810 | 886 | 6,834 |
+
 ### 2.1 Dataset size after deduplication-aware filtering
 
 After candidate restriction and quality filtering, the total number of usable patches decreased from 277,516 to 262,574, corresponding to 14,942 removed patches. Removal reasons were dominated by low tissue occupancy, with much smaller contributions from solid-color and high-black artifacts. Specifically, 12,451 removals were due to low tissue, 2,478 to solid-color behavior, and 13 to high-black behavior. This distribution indicates that the filtering stage is primarily acting as intended on histologically uninformative regions rather than aggressively rejecting potentially useful tissue-containing patches.

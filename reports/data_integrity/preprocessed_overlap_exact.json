@@ -1,0 +1,53 @@
+{
+  "created_at": "2026-05-06T23:47:51.881867",
+  "pcam_dir": "pcam_data\\preprocessed_macenko_benchmark_style",
+  "cam17_dir": "data\\wilds\\camelyon17_h5_full_oodval\\preprocessed_macenko_benchmark_style",
+  "hashing_space": "sha256(uint8_rgb_bytes)",
+  "pcam_unique_hashes_by_split": {
+    "train": 208354,
+    "valid": 26515,
+    "test": 27704
+  },
+  "cam17_unique_hashes_by_split": {
+    "train": 296291,
+    "valid": 34389,
+    "test": 83181
+  },
+  "pcam_unique_hashes_union": 262540,
+  "cam17_unique_hashes_union": 413860,
+  "cam17_split_overlap_vs_any_pcam": {
+    "train": {
+      "n_samples": 296294,
+      "n_overlap_with_any_pcam": 4,
+      "overlap_rate": 1.350010462581085e-05
+    },
+    "valid": {
+      "n_samples": 34389,
+      "n_overlap_with_any_pcam": 0,
+      "overlap_rate": 0.0
+    },
+    "test": {
+      "n_samples": 83181,
+      "n_overlap_with_any_pcam": 1,
+      "overlap_rate": 1.2021976172443227e-05
+    }
+  },
+  "pcam_split_overlap_vs_any_cam17": {
+    "train": {
+      "n_samples": 208355,
+      "n_overlap_with_any_cam17": 2,
+      "overlap_rate": 9.599001703822802e-06
+    },
+    "valid": {
+      "n_samples": 26515,
+      "n_overlap_with_any_cam17": 0,
+      "overlap_rate": 0.0
+    },
+    "test": {
+      "n_samples": 27704,
+      "n_overlap_with_any_cam17": 0,
+      "overlap_rate": 0.0
+    }
+  },
+  "union_intersection_hashes": 1
+}

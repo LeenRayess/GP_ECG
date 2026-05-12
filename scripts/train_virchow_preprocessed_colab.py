@@ -54,7 +54,11 @@ def _pct_milestones_crossed(batch_1based: int, n_batches: int, printed: set) -> 
 
 
 class PreprocessedPCamDataset(Dataset):
-    """HDF5 PCam patches; resize to 224 and ImageNet-normalize."""
+    """HDF5 PCam patches; resize to 224 and ImageNet-normalize.
+
+    Keeps HDF5 files open per process/worker. Opening/closing on every __getitem__
+    is catastrophically slow on network filesystems (e.g. Drive FUSE) with large batches.
+    """
 
     def __init__(self, x_path, y_path, resize_size=224):
         import h5py
@@ -62,18 +66,41 @@ class PreprocessedPCamDataset(Dataset):
         self.x_path = x_path
         self.y_path = y_path
         self.resize_size = resize_size
+        self._fx = None
+        self._fy = None
         with h5py.File(y_path, "r") as f:
             self.n = f["y"].shape[0]
+
+    def __getstate__(self):
+        return {
+            "x_path": self.x_path,
+            "y_path": self.y_path,
+            "resize_size": self.resize_size,
+            "n": self.n,
+        }
+
+    def __setstate__(self, state):
+        self.x_path = state["x_path"]
+        self.y_path = state["y_path"]
+        self.resize_size = state["resize_size"]
+        self.n = state["n"]
+        self._fx = None
+        self._fy = None
+
+    def _ensure_open(self):
+        if self._fx is None:
+            import h5py
+
+            self._fx = h5py.File(self.x_path, "r")
+            self._fy = h5py.File(self.y_path, "r")
 
     def __len__(self):
         return self.n
 
     def __getitem__(self, idx):
-        import h5py
-
-        with h5py.File(self.x_path, "r") as fx, h5py.File(self.y_path, "r") as fy:
-            x = np.array(fx["x"][idx], dtype=np.float32)
-            y = float(np.array(fy["y"][idx]).reshape(-1)[0])
+        self._ensure_open()
+        x = np.array(self._fx["x"][idx], dtype=np.float32)
+        y = float(np.array(self._fy["y"][idx]).reshape(-1)[0])
 
         x = torch.from_numpy(x).permute(2, 0, 1)
         x = F.interpolate(

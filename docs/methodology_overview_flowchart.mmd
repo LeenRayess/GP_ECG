@@ -1,0 +1,23 @@
+%% Methodology overview — compact “T” style (horizontal spine + branched outcomes)
+%% Paste into https://mermaid.live → Export SVG/PNG for Word. Resize in Word with aspect ratio locked.
+
+flowchart TB
+
+  classDef start fill:#1f3864,color:#ffffff,stroke:#102542,stroke-width:2px
+  classDef step fill:#2f5597,color:#ffffff,stroke:#203864,stroke-width:2px
+  classDef decision fill:#548235,color:#ffffff,stroke:#375623,stroke-width:2px
+  classDef action fill:#2e75b6,color:#ffffff,stroke:#1f4e79,stroke-width:2px
+  classDef endNode fill:#c65911,color:#ffffff,stroke:#7f3118,stroke-width:2px
+
+  S([Curated PCam / CAMELYON17 patches]):::start
+  P[Integrity, QC, stain, scaling, resize]:::step
+  T[Train + validation-only selection]:::step
+  D{Training domain}:::decision
+
+  A[Score: PCam test + CAMELYON17 transfer]:::action
+  B[Score: CAMELYON17 test + PCam transfer]:::action
+  Z([Metrics, calibration, qualitative review, statistics]):::endNode
+
+  S --> P --> T --> D
+  D -->|PCam-trained| A --> Z
+  D -->|CAMELYON17-trained| B --> Z

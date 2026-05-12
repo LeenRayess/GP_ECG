@@ -1,0 +1,38 @@
+{
+  "tau_H": 0.23245352597367352,
+  "n_total": 83181,
+  "buckets": [
+    {
+      "bucket": "FP",
+      "available_n": 564,
+      "sampled_n": 20,
+      "shortfall": 0
+    },
+    {
+      "bucket": "FN",
+      "available_n": 766,
+      "sampled_n": 20,
+      "shortfall": 0
+    },
+    {
+      "bucket": "high_entropy_error",
+      "available_n": 1035,
+      "sampled_n": 20,
+      "shortfall": 0
+    },
+    {
+      "bucket": "high_entropy_correct",
+      "available_n": 7284,
+      "sampled_n": 20,
+      "shortfall": 0
+    },
+    {
+      "bucket": "confident_error",
+      "available_n": 399,
+      "sampled_n": 20,
+      "shortfall": 0
+    }
+  ],
+  "threshold": 0.5,
+  "probability_used": "prob_after_temperature (calibrated)"
+}

@@ -1,29 +1,27 @@
 """
-Quick GPU checks: (1) PyTorch — same logic as scripts/train_benchmark_cnns.py.
+Quick GPU checks: (1) PyTorch — same stack as scripts/cnn_baseline_full_pipeline.py.
 (2) TensorFlow — optional; native Windows often has no TF GPU even when PyTorch works.
 """
 import os
 
-# --- PyTorch: what train_benchmark_cnns.py uses --------------------------------
+# --- PyTorch -----------------------------------------------------------------
 import torch
 
-print("=== PyTorch (used by train_benchmark_cnns.py) ===")
+print("=== PyTorch (used by cnn_baseline_full_pipeline.py) ===")
 print("torch:", torch.__version__)
 print("torch.version.cuda:", getattr(torch.version, "cuda", None))
 
 cuda_ok = torch.cuda.is_available()
 device = torch.device("cuda" if cuda_ok else "cpu")
 if cuda_ok:
-    print("GPU: CUDA available — {} (device {})".format(
-        torch.cuda.get_device_name(0), device
-    ))
+    print("GPU: CUDA available — {} (device {})".format(torch.cuda.get_device_name(0), device))
     print("  cuda device count:", torch.cuda.device_count())
 else:
-    print("GPU: CUDA not available — train_benchmark_cnns would use CPU.")
+    print("GPU: CUDA not available — cnn_baseline_full_pipeline would use CPU.")
 
-# --- TensorFlow: separate stack; not used by train_benchmark_cnns --------------
+# --- TensorFlow: separate stack ----------------------------------------------
 print()
-print("=== TensorFlow (not used by train_benchmark_cnns.py) ===")
+print("=== TensorFlow (not used by cnn_baseline_full_pipeline.py) ===")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "1")
 try:
     import tensorflow as tf

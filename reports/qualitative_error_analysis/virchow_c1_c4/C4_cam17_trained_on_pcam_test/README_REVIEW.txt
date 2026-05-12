@@ -1,0 +1,12 @@
+1) Open gallery.html in a browser (images + captions).
+2) Open review_labels_template.csv in Excel/Sheets.
+3) For each case_id, mark checklist items Present / Absent / Unclear
+   (exact rubric + definitions: docs/qualitative_error_analysis_protocol.md section 6).
+4) Review order: use column review_order (randomized within export).
+5) After finishing, save as review_labels_completed.csv in this folder.
+
+Condition ID (for thesis): C4
+Direction label: CAMELYON17_train -> PCam_test
+
+If raw images are missing, only preprocessed PNGs were written; pass raw_test_x
+with test_x.h5 whose rows align with the same indices as preprocessed test.
