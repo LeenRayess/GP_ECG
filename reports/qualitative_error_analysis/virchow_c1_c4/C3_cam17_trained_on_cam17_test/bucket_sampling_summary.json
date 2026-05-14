@@ -1,35 +1,39 @@
 {
   "tau_H": 0.3577248373637589,
   "n_total": 83181,
+  "prep_to_raw": {
+    "source": "C:\\GP_ECG\\data\\wilds\\camelyon17_h5_full_oodval\\preprocessed_macenko_benchmark_style\\manifest.json",
+    "split": "test"
+  },
   "buckets": [
     {
       "bucket": "FP",
       "available_n": 872,
-      "sampled_n": 20,
+      "sampled_n": 10,
       "shortfall": 0
     },
     {
       "bucket": "FN",
       "available_n": 806,
-      "sampled_n": 20,
+      "sampled_n": 10,
       "shortfall": 0
     },
     {
       "bucket": "high_entropy_error",
       "available_n": 1278,
-      "sampled_n": 20,
+      "sampled_n": 10,
       "shortfall": 0
     },
     {
       "bucket": "high_entropy_correct",
       "available_n": 7041,
-      "sampled_n": 20,
+      "sampled_n": 10,
       "shortfall": 0
     },
     {
       "bucket": "confident_error",
       "available_n": 362,
-      "sampled_n": 20,
+      "sampled_n": 10,
       "shortfall": 0
     }
   ],

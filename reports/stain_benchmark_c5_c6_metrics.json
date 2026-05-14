@@ -1,0 +1,12 @@
+{
+  "source": "experiments/benchmark_cnn_runs/<arm>/test_metrics_final.json and run_progress.json (best_val_auc)",
+  "test_split": "PCam stain benchmark held-out test subset (Methods C5/C6)",
+  "rows": [
+    {"condition": "C5", "arm": "Macenko (classical single-reference)", "val_roc_auc": 0.9176700329356915, "test_roc_auc": 0.9252530365005699, "test_accuracy": 0.8122448979591836, "test_f1": 0.8419594369943478},
+    {"condition": "C5", "arm": "Reinhard (classical single-reference)", "val_roc_auc": 0.9293044508690526, "test_roc_auc": 0.9172881095193665, "test_accuracy": 0.806385780118499, "test_f1": 0.7924341873103253},
+    {"condition": "C5", "arm": "Vahadane (classical single-reference)", "val_roc_auc": 0.9182104771528442, "test_roc_auc": 0.9167543506039496, "test_accuracy": 0.8223173140223832, "test_f1": 0.8445903149651638},
+    {"condition": "C6", "arm": "Adaptive single-reference routing", "val_roc_auc": 0.9116680102913501, "test_roc_auc": 0.9128440866807727, "test_accuracy": 0.8289005924950625, "test_f1": 0.8456559178098462},
+    {"condition": "C6", "arm": "Adaptive multi-reference routing", "val_roc_auc": 0.9211918685602896, "test_roc_auc": 0.8814527331529012, "test_accuracy": 0.8009874917709019, "test_f1": 0.8125271317829458},
+    {"condition": "C6", "arm": "Adaptive multi-reference + train-time augmentation", "val_roc_auc": 0.924074063628689, "test_roc_auc": 0.9029424143410221, "test_accuracy": 0.8144832126398946, "test_f1": 0.820280612244898}
+  ]
+}

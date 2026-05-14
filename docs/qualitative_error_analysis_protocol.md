@@ -37,12 +37,14 @@ Optional (if time allows):
 
 ## 4. Sampling Plan (Low-Effort, Strong Coverage)
 
-Target **80 total reviewed cases per comparison direction**, sampled as:
+Target **40 total reviewed cases per comparison direction** (four core buckets), sampled as:
 
-- 20 FP
-- 20 FN
-- 20 high-uncertainty errors
-- 20 high-uncertainty correct
+- 10 FP
+- 10 FN
+- 10 high-uncertainty errors
+- 10 high-uncertainty correct
+
+If the optional high-confidence error bucket is included, add **10** more (50 total per direction).
 
 If a bucket has fewer than target size, take all available and document shortfall.
 
@@ -54,6 +56,7 @@ For each selected case, store:
 
 - raw patch image,
 - preprocessed patch image,
+- alignment note: preprocessed `test_x.h5` rows follow the evaluation manifest; the matching row in the **original** raw `test_x.h5` is `manifest.json` → `test.kept_indices[prep_row]` (not necessarily the same integer as `prep_row` when quality filtering removed patches),
 - true label and predicted label,
 - predicted probability,
 - uncertainty statistic(s),
@@ -78,7 +81,7 @@ Add one short free-text note (1-2 lines) explaining the dominant suspected failu
 
 To reduce subjective drift:
 
-- review cases in randomized order within each bucket,
+- export files list cases in the same order as `gallery.html` (bucket sections alphabetically; `review_order` runs 1..N in that sequence); randomize in Excel/Sheets if you prefer a different review sequence,
 - use the same checklist wording throughout,
 - avoid changing definitions mid-review,
 - if uncertain, mark "Unclear" rather than forcing a category.
@@ -111,7 +114,7 @@ For transparency, include 95% Wilson interval (optional but recommended):
 \text{CI}_{95\%}^{\text{Wilson}}(\hat{p}, n).
 \]
 
-If formal CI computation is skipped, report raw counts clearly (e.g., 9/20).
+If formal CI computation is skipped, report raw counts clearly (e.g., 4/10).
 
 ## 10. Predefined Interpretation Boundaries
 
@@ -168,7 +171,7 @@ Include:
 
 With 80 cases and checklist-only annotation:
 
-- case preparation/export: 20-40 min
+- case preparation/export: 10-25 min
 - human review: 60-90 min
 - summary tables and notes: 30-45 min
 

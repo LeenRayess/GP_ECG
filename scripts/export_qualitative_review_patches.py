@@ -1,15 +1,20 @@
 """
 Export patch PNGs + CSV roster for manual qualitative error review.
 
-Aligns with docs/qualitative_error_analysis_protocol.md (buckets, n=20, seed 42)
+Aligns with docs/qualitative_error_analysis_protocol.md (buckets, n=10, seed 42)
 and docs/final_methodology.md Ch.6 / §5.3 (confidence c, entropy H, tau_H = 90th
 percentile of H on the evaluated split, threshold 0.5 on calibrated p).
+
+Outputs `selected_cases.csv` and `review_labels_template.csv` in the same row order
+as `gallery.html` (bucket sections sorted alphabetically; within-bucket order matches sampling).
 
 Inputs:
   - test_predictions.npz from evaluate_virchow_preprocessed_test_colab.py
     (expects y_true, prob_after_temperature; optional prob_mc_std)
   - test_x.h5 for preprocessed patches (dataset "x", same row order as eval)
-  - optional raw test_x.h5 (same indices) for side-by-side raw vs preprocessed
+  - optional raw test_x.h5 (original split; row = manifest test kept_indices[prep_row])
+  - manifest.json next to preprocessed test_x.h5 (or --manifest-json): maps each
+    preprocessed row to the raw H5 row after quality filtering (required for correct pairs)
 
 Example:
   python scripts/export_qualitative_review_patches.py ^
@@ -27,7 +32,7 @@ import argparse
 import csv
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import h5py
 import numpy as np
@@ -61,6 +66,36 @@ def _read_x_row(h5_path: Path, idx: int) -> np.ndarray:
         return np.array(f["x"][idx])
 
 
+def _prep_to_raw_kept_indices(
+    n_prep: int,
+    preprocessed_test_x: Path,
+    manifest_json: Optional[Path],
+    split: str,
+) -> Tuple[np.ndarray, Optional[Path]]:
+    """Row i in preprocessed test_x.h5 corresponds to raw row kept[i] in the original test_x.h5."""
+    candidates: List[Path] = []
+    if manifest_json is not None:
+        candidates.append(Path(manifest_json))
+    candidates.append(Path(preprocessed_test_x).parent / "manifest.json")
+    chosen: Optional[Path] = None
+    for cand in candidates:
+        if cand.is_file():
+            chosen = cand
+            break
+    if chosen is None:
+        return np.arange(n_prep, dtype=np.int64), None
+    with open(chosen, "r", encoding="utf-8") as f:
+        m = json.load(f)
+    if split not in m:
+        raise ValueError(f"manifest {chosen} has no {split!r} entry (keys: {list(m.keys())})")
+    kept = np.asarray(m[split]["kept_indices"], dtype=np.int64)
+    if kept.size != n_prep:
+        raise ValueError(
+            f"manifest {split}.kept_indices length {kept.size} != preprocessed/NPZ length {n_prep}"
+        )
+    return kept, chosen
+
+
 def _save_patch_png(arr: np.ndarray, out_path: Path, resize: Optional[int]) -> None:
     rgb = _h5_patch_to_uint8_rgb(arr)
     im = Image.fromarray(rgb, mode="RGB")
@@ -68,6 +103,17 @@ def _save_patch_png(arr: np.ndarray, out_path: Path, resize: Optional[int]) -> N
         im = im.resize((resize, resize), Image.Resampling.BICUBIC)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     im.save(out_path)
+
+
+def gallery_row_order(selected: Sequence[Dict[str, object]]) -> List[Dict[str, object]]:
+    """Same order as gallery.html: buckets alphabetically, cases in sampling order within each."""
+    buckets: Dict[str, List[Dict[str, object]]] = {}
+    for r in selected:
+        buckets.setdefault(str(r["bucket"]), []).append(r)
+    out: List[Dict[str, object]] = []
+    for bname in sorted(buckets.keys()):
+        out.extend(buckets[bname])
+    return out
 
 
 def _sample_mask_indices(mask: np.ndarray, n: int, rng: np.random.Generator) -> np.ndarray:
@@ -88,9 +134,11 @@ def export_qualitative_review(
     condition_id: str = "",
     direction: str = "",
     seed: int = 42,
-    n_per_bucket: int = 20,
+    n_per_bucket: int = 10,
     png_size: int = 224,
     include_confident_errors: bool = False,
+    manifest_json: Optional[Path] = None,
+    manifest_split: str = "test",
 ) -> Path:
     """Sample buckets, write PNGs, CSVs, gallery.html. Returns *out_dir*."""
     npz_path = Path(npz_path)
@@ -111,6 +159,14 @@ def export_qualitative_review(
     if p.size != n:
         raise ValueError("y_true and prob_after_temperature length mismatch")
 
+    prep_to_raw, manifest_used = _prep_to_raw_kept_indices(
+        n, pre_x, manifest_json, manifest_split
+    )
+    if raw_x is not None and manifest_used is not None:
+        print("prep→raw mapping:", manifest_used, f"({manifest_split}.kept_indices)")
+    elif raw_x is not None:
+        print("warning: no manifest.json next to preprocessed test_x; assuming raw row index == preprocessed row")
+
     y_hat = (p >= 0.5).astype(np.int64)
     c = np.maximum(p, 1.0 - p)
     H = _binary_entropy(p)
@@ -125,8 +181,6 @@ def export_qualitative_review(
     he_err = (y_hat != y) & (H >= tau_H)
     he_ok = (y_hat == y) & (H >= tau_H)
     ce = (y_hat != y) & (c >= 0.9)
-
-    rng = np.random.default_rng(seed)
 
     plan: List[Tuple[str, np.ndarray, int]] = [
         ("FP", fp, 1001),
@@ -162,8 +216,9 @@ def export_qualitative_review(
             _save_patch_png(pre_arr, rel_pre, resize)
 
             rel_raw_path = ""
+            raw_row = int(prep_to_raw[i])
             if raw_x is not None:
-                raw_arr = _read_x_row(raw_x, i)
+                raw_arr = _read_x_row(raw_x, raw_row)
                 rel_raw = fig_root / bucket_name / f"{case_id}_raw.png"
                 _save_patch_png(raw_arr, rel_raw, resize)
                 rel_raw_path = str(rel_raw)
@@ -171,6 +226,7 @@ def export_qualitative_review(
             row = {
                 "case_id": case_id,
                 "h5_index": i,
+                "raw_h5_index": raw_row,
                 "bucket": bucket_name,
                 "y_true": int(y[i]),
                 "y_hat": int(y_hat[i]),
@@ -186,15 +242,19 @@ def export_qualitative_review(
             }
             if mc_std is not None:
                 row["prob_mc_std"] = float(mc_std[i])
+            if raw_x is None:
+                row.pop("raw_h5_index", None)
             selected.append(row)
 
+    ordered = gallery_row_order(selected)
+
     csv_path = out_dir / "selected_cases.csv"
-    if selected:
-        keys = list(selected[0].keys())
+    if ordered:
+        keys = list(ordered[0].keys())
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=keys)
             w.writeheader()
-            w.writerows(selected)
+            w.writerows(ordered)
     else:
         csv_path.write_text("h5_index,bucket,note\n", encoding="utf-8")
 
@@ -203,6 +263,12 @@ def export_qualitative_review(
             {
                 "tau_H": tau_H,
                 "n_total": n,
+                "prep_to_raw": (
+                    {
+                        "source": str(manifest_used) if manifest_used else "identity (no manifest)",
+                        "split": manifest_split if manifest_used else None,
+                    }
+                ),
                 "buckets": summary_rows,
                 "threshold": 0.5,
                 "probability_used": "prob_after_temperature (calibrated)",
@@ -228,10 +294,7 @@ def export_qualitative_review(
             + [f"chk_{c}_Present_Absent_Unclear" for c in checklist[:-1]]
             + ["free_text_note"]
         )
-        order = list(range(len(selected)))
-        rng.shuffle(order)
-        for ro, k in enumerate(order):
-            r = selected[k]
+        for ro, r in enumerate(ordered):
             w.writerow([r["case_id"], r["h5_index"], r["bucket"], ro + 1] + [""] * len(checklist))
 
     _write_index_html(out_dir, selected, condition_id, direction)
@@ -244,14 +307,16 @@ def export_qualitative_review(
                 "2) Open review_labels_template.csv in Excel/Sheets.",
                 "3) For each case_id, mark checklist items Present / Absent / Unclear",
                 "   (exact rubric + definitions: docs/qualitative_error_analysis_protocol.md section 6).",
-                "4) Review order: use column review_order (randomized within export).",
+                "4) Rows match gallery.html top-to-bottom (bucket sections alphabetically;",
+                "   review_order is 1..N in that sequence). Randomize your review in Excel if you prefer.",
                 "5) After finishing, save as review_labels_completed.csv in this folder.",
                 "",
                 f"Condition ID (for thesis): {condition_id or '(set condition_id)'}",
                 f"Direction label: {direction or '(set direction)'}",
                 "",
                 "If raw images are missing, only preprocessed PNGs were written; pass raw_test_x",
-                "with test_x.h5 whose rows align with the same indices as preprocessed test.",
+                "with the original split test_x.h5. Row alignment uses manifest.json kept_indices",
+                "(next to preprocessed test_x.h5) so each preprocessed row maps to the correct raw patch.",
             ]
         ),
         encoding="utf-8",
@@ -294,7 +359,7 @@ def _write_index_html(
             parts.append(
                 f"<div style='display:inline-block;vertical-align:top;margin:8px;'>"
                 f"<img src='{rel}' width='224'/>{raw_html}"
-                f"<div class='cap'>idx={r['h5_index']} y={r['y_true']} pred={r['y_hat']} "
+                f"<div class='cap'>prep_idx={r['h5_index']} raw_idx={r.get('raw_h5_index', r['h5_index'])} y={r['y_true']} pred={r['y_hat']} "
                 f"p={float(r['p_cal']):.3f} c={float(r['confidence']):.3f} H={float(r['entropy']):.3f}"
                 f"</div></div>"
             )
@@ -308,17 +373,20 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Export patches for qualitative error analysis.")
     ap.add_argument("--npz", type=str, required=True, help="test_predictions.npz from Virchow eval")
     ap.add_argument("--preprocessed-test-x", type=str, required=True, help="test_x.h5 (same order as NPZ)")
-    ap.add_argument("--raw-test-x", type=str, default="", help="optional raw test_x.h5 (same indices)")
+    ap.add_argument("--raw-test-x", type=str, default="", help="optional raw test_x.h5 (original split; rows via manifest kept_indices)")
+    ap.add_argument("--manifest-json", type=str, default="", help="optional manifest.json (default: beside preprocessed test_x.h5)")
+    ap.add_argument("--manifest-split", type=str, default="test", help="manifest key for kept_indices (default: test)")
     ap.add_argument("--out-dir", type=str, required=True, help="e.g. reports/qualitative_error_analysis/C2_...")
     ap.add_argument("--condition-id", type=str, default="", help="e.g. C1..C4")
     ap.add_argument("--direction", type=str, default="", help="e.g. PCam_to_CAMELYON17")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--n-per-bucket", type=int, default=20, help="target samples per bucket (protocol: 20)")
+    ap.add_argument("--n-per-bucket", type=int, default=10, help="target samples per bucket (protocol: 10)")
     ap.add_argument("--png-size", type=int, default=224, help="export square size (0 = native H5 resolution)")
     ap.add_argument("--include-confident-errors", action="store_true", help="extra bucket CE (methodology §6)")
     args = ap.parse_args()
 
     raw = Path(args.raw_test_x) if args.raw_test_x.strip() else None
+    man = Path(args.manifest_json) if args.manifest_json.strip() else None
     export_qualitative_review(
         Path(args.npz),
         Path(args.preprocessed_test_x),
@@ -330,6 +398,8 @@ def main() -> None:
         n_per_bucket=args.n_per_bucket,
         png_size=args.png_size,
         include_confident_errors=args.include_confident_errors,
+        manifest_json=man,
+        manifest_split=args.manifest_split,
     )
 
 

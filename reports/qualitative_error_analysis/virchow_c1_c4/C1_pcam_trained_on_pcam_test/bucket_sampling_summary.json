@@ -1,35 +1,39 @@
 {
   "tau_H": 0.5240385139206283,
   "n_total": 27704,
+  "prep_to_raw": {
+    "source": "C:\\GP_ECG\\pcam_data\\preprocessed_macenko_benchmark_style\\manifest.json",
+    "split": "test"
+  },
   "buckets": [
     {
       "bucket": "FP",
       "available_n": 355,
-      "sampled_n": 20,
+      "sampled_n": 10,
       "shortfall": 0
     },
     {
       "bucket": "FN",
       "available_n": 1399,
-      "sampled_n": 20,
+      "sampled_n": 10,
       "shortfall": 0
     },
     {
       "bucket": "high_entropy_error",
       "available_n": 929,
-      "sampled_n": 20,
+      "sampled_n": 10,
       "shortfall": 0
     },
     {
       "bucket": "high_entropy_correct",
       "available_n": 1842,
-      "sampled_n": 20,
+      "sampled_n": 10,
       "shortfall": 0
     },
     {
       "bucket": "confident_error",
       "available_n": 423,
-      "sampled_n": 20,
+      "sampled_n": 10,
       "shortfall": 0
     }
   ],
