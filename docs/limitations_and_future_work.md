@@ -1,63 +1,23 @@
-# Limitations and future work
+Limitations and Future Work
 
-This section states what the evidence cannot claim by design, what bounded the scope of optional experiments, and which directions follow once more compute or data become available. It does not repeat the Results and Discussion narrative.
+This section delineates the boundaries of what the current empirical evidence can definitively claim by design, outlines the structural scope of the study, and establishes clear trajectories for subsequent research.
 
-## Limitations
+Limitations
 
-### What the study can and cannot claim
+By design, this study is retrospective and relies exclusively on public, patch-level benchmarks. Consequently, the findings characterize computational discrimination, probability calibration, and error behaviour under fixed dataset splits and established label definitions; they do not evaluate clinical workflow integration, regulatory approval metrics, or patient outcomes. Furthermore, the binary task itself (classifying 96×96 pixel patches based on tumour presence within a central 32×32 focus) serves as a highly controlled surrogate for whole-slide analysis. It does not fully encapsulate the complexity of full whole-slide search routines, isolated tumour cell (ITC) classifications, or the multidimensional clinical costs associated with practical hospital deployment. The principal external claim supported here is performance when training on PCam and evaluating on held-out multi-hospital CAMELYON17 test. The mirrored layout (train on CAMELYON17, test on PCam) is included to document transfer asymmetry and how ranking, fixed-threshold behaviour, and calibration can diverge; it is not treated as a symmetric second bar that the forward claim must also satisfy.
 
-The work uses retrospective public patch benchmarks, not prospectively collected clinical material or multi-reader studies. Findings are therefore about discrimination, calibration, and error behaviour on fixed test splits under published label definitions, not about regulatory approval, workflow integration, or patient outcomes.
+A major constraint governing the practical scope of this study was the finite GPU capacity, wall-clock limits on full-corpus training, and the substantial computational overhead required to process massive gigapixel-scale image matrices end-to-end. This hardware envelope bounded the experimental matrix to a single reproducible pipeline. Investigating additional colour normalizers on full data, testing alternative foundation backbones, conducting exhaustive hyperparameter or threshold sweeps, or executing full leave-one-hospital-out validation blocks would have multiplied training and inference passes beyond our available runtimes.
 
-Both PatchCamelyon and CAMELYON17 (WILDS) release 96×96 RGB tiles with a patch-level binary label determined by tumour in a central 32×32 pixel region; the outer field is context only. That task is well defined for benchmarking but is not a complete model of whole-slide search behaviour, ITC or micrometastasis classes, or how hospitals set operating points from prevalence and cost.
+Statistical uncertainty estimates, including bootstrap percentile intervals and paired permutation tests, quantify variability strictly within these held-out tensors rather than substituting for validation on an independent, prospectively gathered clinical cohort. Similarly, the structured qualitative review provides a targeted checklist evaluation of small, randomly drawn error and high-entropy pools. It functions as an illustrative diagnostic tool for visual patterns (such as borderline morphology or patch-context boundaries) rather than a complete, full-test census estimating true absolute prevalence across the entire dataset.
 
-Bootstrap percentile intervals and paired permutation tests quantify uncertainty on the same held-out tensors they are computed from; they do not replace an independent prospectively collected test cohort.
+Future Work
 
-The structured qualitative review uses small, prespecified exports from error and high-entropy buckets. It is illustrative and checklist-driven; it is not a census of every test patch and does not estimate full-test prevalence of morphological patterns.
+The empirical patterns observed across these experiments suggest several natural extensions to advance the framework. The highest-priority line of work is to stress-test the PCam-trained models (in particular the Virchow2 configuration that performed strongly on CAMELYON17 test) under progressively stricter evidence standards than patch benchmarks alone: further public or consented patch corpora from new institutions or scanners; hospital-stratified or leave-one-institution-out analysis on CAMELYON17 to probe multi-centre stability of the forward external result; richer perturbation or stress tests; and, where ethics and data access allow, prospective sampling or reader-in-the-loop studies with operating-point analysis tied to clinical sensitivity targets. Slide-level or weakly supervised evaluation on whole lymph-node slides, together with workflow metrics such as latency, escalation rules, and failure handling, would be needed before any responsible claim about broad generalisability or readiness for clinical deployment. The thesis should be read as establishing a strong patch-level forward transfer benchmark and a reusable evaluation protocol for that path, not as deployment clearance.
 
-### Practical scope bound by compute and runtime
+Further methodological work should expand the stain-handling investigation beyond the initial subset benchmark. While the single-reference Macenko method was utilised for full-corpus preprocessing, evaluating alternative classical or learned colour normalizers across the full datasets would test how much headroom remains on the forward PCam-to-CAMELYON17 external path after the current choice, and whether alternative normalizers materially change the mirror path (CAMELYON17-trained models on external PCam test), where ranking remained strong but recall at a fixed threshold and calibration were stressed.
 
-The experimental programme was executed under finite GPU capacity, wall-clock limits on full-corpus training and evaluation, and the need to keep a single traceable pipeline end-to-end. In practice, that meant prioritising a prespecified preprocessing path (including the stain benchmark that justified Macenko for main runs), two model families on the same tensors, the bidirectional transfer layout, calibration fitting on source validation only, and the planned statistical and qualitative add-ons.
+Transitioning from a frozen-encoder framework to evaluating the effects of fine-tuning top transformer blocks or testing alternative classification heads represents a key step for model optimisation. Furthermore, because the standard 0.5 probability cutoff revealed distinct recall failures on the mirror external surface (PCam test after CAMELYON17 training) despite strong underlying ranking metrics (ROC-AUC = 0.950), subsequent investigations should integrate cost-sensitive thresholds, sensitivity targets at fixed false-positive rates, and prevalence-aware objectives directly into the evaluation pipeline, with the forward external target kept explicit when reporting deployment-style claims.
 
-Within that envelope, many reasonable extensions (additional normalizers on full data, alternative foundation checkpoints, partial encoder fine-tuning, multi-seed variance, exhaustive threshold sweeps, or per-hospital disaggregation of CAMELYON17) would each multiply training and inference passes. They were not omitted for lack of scientific interest, but because they would have exceeded the time and hardware budget available for this thesis while still doing justice to the core comparison the examiners were asked to judge.
+Addressing these domain shifts also requires exploring target-aware calibration strategies. Incorporating lightweight adapters or test-time probability scaling using small, unlabelled validation samples from the target clinical environment could bridge the reliability gap highlighted by the degraded out-of-domain reliability diagrams on the mirror leg, and could be studied alongside the forward PCam-trained model on CAMELYON17 test where calibration was already strong under this protocol.
 
-### Reproducibility and environment
-
-Exact numeric reproduction depends on library versions, GPU nondeterminism, and the frozen public splits. The repository records scripts, manifests, and settings; reruns should agree within small numerical tolerances rather than demanding bit-identical logits across machines unless seeds and hardware are fully pinned.
-
----
-
-## Future work
-
-The items below are natural extensions of the same benchmarks and protocols. Several were already identified during design; they are listed here as forward work rather than as shortcomings, because extending them was deferred by the compute and runtime envelope described above.
-
-### Preprocessing, stain space, and ablations
-
-After the prespecified stain-handling benchmark on class-balanced subsets, main corpora used single-reference Macenko. A larger compute budget would allow full-corpus or multi-seed reruns with other classical or learned normalizers under identical train–test rules, or ablations that vary quality thresholds, to see whether the difficult CAMELYON17-trained to external PCam cell responds more to colour alignment than to representation capacity alone.
-
-### Architecture, fine-tuning depth, and model zoo
-
-Virchow2 was studied in a frozen-encoder, trainable-head configuration suited to limited adaptation time. Partial fine-tuning of top transformer blocks, alternative heads, or additional foundation checkpoints (and distilled variants) are obvious next steps; each adds hyperparameter and checkpoint-selection work and multiplies GPU hours per condition.
-
-### Operating points, thresholds, and decision costs
-
-All threshold summaries in the main tables use probability 0.5 after source-validation temperature scaling, for comparability across arms. Future work should report cost-sensitive cut-offs, sensitivity at fixed false-positive rates, or prevalence-aware objectives alongside ROC–AUC and PR–AUC, especially where ROC–AUC stays high while recall at 0.5 is low.
-
-### Calibration when the deployment domain shifts
-
-Post-hoc temperature scaling on the source validation split improved probability metrics in the reported runs but did not by itself fix recall at the fixed 0.5 cut on the hardest transfer cell. With more experimentation budget, target-aware calibration (small held-out sets from the target site, lightweight adapters, or carefully validated test-time procedures) could be compared under the same leakage rules.
-
-### Site structure and external validity
-
-CAMELYON17 provides hospital metadata; secondary analyses could stratify metrics by site or run leave-one-hospital-out protocols when runtimes allow. Prospective multi-centre data remain the gold standard for deployment claims.
-
-### Slide-level aggregation and richer labels
-
-Patch benchmarks enabled clean bidirectional transfer; clinical use is often slide-level. MIL-style aggregation, explicit ITC or size strata where labels exist, and joint models with segmentation are natural when annotations and compute support them.
-
-### Throughput, compression, and monitoring
-
-Reporting latency, memory footprint, and compressed or distilled models would matter for laboratory deployment, alongside simple monitoring when stain or scanner drift is suspected.
-
----
-
-Placement note (for the thesis): insert this block after the Discussion chapter and before the Conclusion chapter; point Methodology limitations at this chapter in one cross-reference if overlapping text is removed there.
+Finally, the localised patch-level architecture developed here should ultimately be scaled up to slide-level clinical decision support systems. The strong forward transfer result on PCam to CAMELYON17 test under this pipeline motivates repeating the same integrity-aware recipe as new corpora become available. Merging foundation-model patch embeddings with advanced weakly supervised MIL aggregators, expanding labels to capture explicit size or diagnostic strata, and measuring operational deployment metrics, such as processing throughput and memory footprint, will be essential to translate these computational insights into trustworthy digital pathology workflows.

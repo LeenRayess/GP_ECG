@@ -6,9 +6,9 @@ Copy-paste source for the thesis Introduction (§1.5). Section numbering assumes
 
 ## 1.5.1 Aims
 
-This project aims to build and evaluate a reproducible framework for patch-level lymph-node metastasis detection on H&E images, using PatchCamelyon (PCam) and CAMELYON17 (WILDS) under official train, validation, and test splits. It will compare a pathology foundation model (Virchow2) with a conventional shallow CNN under the same cross-domain protocol, including bidirectional transfer: models trained on one benchmark will be tested on that benchmark’s held-out split and on the other benchmark without retraining, so that in-domain and external performance can be compared in both directions.
+This project aims to build and evaluate a reproducible patch-level framework for lymph-node metastasis on H&E images, using PatchCamelyon (PCam) and CAMELYON17 (WILDS) under their official splits. The main aim is strong external performance when training on PCam and testing on held-out CAMELYON17 test—multi-hospital nodal tissue that stresses stain and acquisition differences relative to PCam. Integrity checks, quality screening, stain normalization (after a prespecified benchmark), and validation-bound training and calibration are aligned with that forward target, while keeping both corpora on a common pipeline for fair comparison.
 
-A central aim is to determine whether quality-aware preprocessing remains necessary for reliable performance when a modern foundation model is used, or whether large-scale pretraining largely absorbs stain- and centre-related variation between datasets. The work will also assess outcomes beyond in-dataset accuracy—discrimination under domain shift, probability calibration, and structured review of typical failure modes—so that conclusions inform validation practice for cross-centre patch classifiers rather than resting on benchmark scores alone.
+Virchow2 (frozen encoder, trainable head) is compared to a shallow CNN on identical tensors and reporting rules. A prespecified mirror—train on CAMELYON17, test on PCam—is run to describe transfer asymmetry (for example when ranking stays high but threshold or calibration behaviour shifts); it informs interpretation and is not treated as a second bar that must be met for the PCam→CAMELYON17 claim. Additional aims are to quantify how much preprocessing still matters beside a frozen foundation encoder, and to report calibration, uncertainty, and structured qualitative review next to discrimination.
 
 ---
 
@@ -30,7 +30,9 @@ To achieve these aims, the project will:
 
 - Develop Virchow2-based classifiers with a frozen encoder and trainable head, consistent input preparation, and reproducible experiment artefacts (weights, logs, and predictions).
 
-- Conduct bidirectional cross-domain evaluation by training on PCam and testing on CAMELYON17, and training on CAMELYON17 and testing on PCam, reporting in-domain and external-domain performance and transfer degradation in both directions.
+- Treat PCam train → CAMELYON17 test as the primary external criterion (with in-domain PCam test as reference), reporting discrimination, calibration, and errors on the multi-hospital split.
+
+- Run the mirror (CAMELYON17 train → PCam test) to document asymmetry and ranking versus threshold/calibration effects; use it for interpretation, not as a symmetric requirement for the forward claim.
 
 - Assess predictive reliability using calibration-focused metrics and post-hoc temperature scaling fitted on validation only, separating ranking performance (ROC-AUC and PR-AUC) from probability quality.
 
@@ -40,12 +42,4 @@ To achieve these aims, the project will:
 
 - Document reproducibility and experimental governance through versioned scripts, run manifests, naming conventions for experimental conditions, and explicit separation of corpus curation from per-patch preprocessing so that the pipeline can be replicated or extended.
 
-In sum, this study will determine whether quality-aware preprocessing together with a pathology foundation model yields more reliable cross-corpus metastasis detection than a conventional CNN under staining and scanner differences, and whether calibrated probabilities remain trustworthy when the test domain changes.
-
-
----
-
-# 2. Literature Review
-
-(Same text as `docs/literature_review.md`; copy from that file for Word.)
-
+In sum, the study tests whether a PCam-trained classifier (integrity-aware pipeline; Virchow2 or CNN) performs strongly on external CAMELYON17 test, how large the CNN–Virchow2 gap is on that path, and what the mirror adds about asymmetric transfer. It also asks whether quality-aware preprocessing remains necessary when using a frozen pathology foundation encoder (Virchow2), compared with the same pipeline for a conventional CNN. The artefacts are meant to support later work on more corpora or sites and on clinical-style operating points, without claiming deployment from patch benchmarks alone.
