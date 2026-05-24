@@ -5,6 +5,9 @@
     "source": "C:\\GP_ECG\\pcam_data\\preprocessed_macenko_benchmark_style\\manifest.json",
     "split": "test"
   },
+  "patch_dataset_inferred": "pcam",
+  "overlay_pcam_center32_positive": false,
+  "patch_meta_csv": null,
   "buckets": [
     {
       "bucket": "FP",

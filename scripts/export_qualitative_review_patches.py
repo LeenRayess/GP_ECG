@@ -15,6 +15,9 @@ Inputs:
   - optional raw test_x.h5 (original split; row = manifest test kept_indices[prep_row])
   - manifest.json next to preprocessed test_x.h5 (or --manifest-json): maps each
     preprocessed row to the raw H5 row after quality filtering (required for correct pairs)
+  - optional --patch-meta-csv: one row per raw test_x row (same order); adds captions
+  - optional --overlay-pcam-center32-positive + --patch-dataset pcam: green box on y=1
+    patches showing PCam's official center 32×32 label region (96×96 patches only)
 
 Example:
   python scripts/export_qualitative_review_patches.py ^
@@ -30,13 +33,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import html
 import json
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import h5py
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 
 def _binary_entropy(p: np.ndarray) -> np.ndarray:
@@ -96,8 +100,74 @@ def _prep_to_raw_kept_indices(
     return kept, chosen
 
 
-def _save_patch_png(arr: np.ndarray, out_path: Path, resize: Optional[int]) -> None:
+def _infer_patch_dataset_kind(preprocessed_test_x: Path, explicit: str) -> str:
+    """Rough split: PCam vs CAMELYON17-style paths for safe label-box behaviour."""
+    e = (explicit or "auto").strip().lower()
+    if e in ("pcam", "cam17", "camelyon17"):
+        return "pcam" if e == "pcam" else "cam17"
+    s = str(preprocessed_test_x).lower().replace("\\", "/")
+    if "pcam_data" in s or "/pcam/" in s:
+        return "pcam"
+    if "camelyon" in s or "wilds" in s:
+        return "cam17"
+    return "unknown"
+
+
+def _maybe_draw_pcam_center_positive_box(rgb: np.ndarray, y_true: int, enabled: bool) -> np.ndarray:
+    """PCam benchmark: y=1 iff center 32x32 of 96x96 contains tumor (Veeling et al.)."""
+    if not enabled or int(y_true) != 1:
+        return rgb
+    h, w = int(rgb.shape[0]), int(rgb.shape[1])
+    if h != 96 or w != 96:
+        return rgb
+    im = Image.fromarray(np.array(rgb, copy=True), mode="RGB")
+    dr = ImageDraw.Draw(im)
+    dr.rectangle([32, 32, 63, 63], outline=(0, 220, 0), width=2)
+    return np.asarray(im)
+
+
+def _load_patch_meta_csv(path: Path):
+    import pandas as pd
+
+    return pd.read_csv(path)
+
+
+def _meta_caption_for_raw_row(meta_df, raw_idx: int) -> str:
+    """One-line caption from a meta table aligned row-for-row with raw test_x.h5."""
+    import pandas as pd
+
+    if meta_df is None or raw_idx < 0 or raw_idx >= len(meta_df):
+        return ""
+    row = meta_df.iloc[int(raw_idx)]
+    parts: List[str] = []
+    for col in row.index:
+        cl = str(col).lower()
+        if cl in ("slide", "wsi", "image", "filename", "filepath"):
+            v = row[col]
+            if pd.notna(v) and str(v).strip():
+                parts.append(f"{col}={v}")
+                break
+    if "patient" in row.index and pd.notna(row["patient"]):
+        parts.append(f"patient={row['patient']}")
+    if "node" in row.index and pd.notna(row["node"]):
+        parts.append(f"node={row['node']}")
+    if "x_coord" in row.index and "y_coord" in row.index and pd.notna(row["x_coord"]) and pd.notna(row["y_coord"]):
+        parts.append(f"x_coord={int(row['x_coord'])} y_coord={int(row['y_coord'])}")
+    elif "x" in row.index and "y" in row.index and pd.notna(row["x"]) and pd.notna(row["y"]):
+        parts.append(f"x={row['x']} y={row['y']}")
+    return " ".join(parts) if parts else ""
+
+
+def _save_patch_png(
+    arr: np.ndarray,
+    out_path: Path,
+    resize: Optional[int],
+    *,
+    y_true: int = 0,
+    overlay_pcam_center32_positive: bool = False,
+) -> None:
     rgb = _h5_patch_to_uint8_rgb(arr)
+    rgb = _maybe_draw_pcam_center_positive_box(rgb, y_true, overlay_pcam_center32_positive)
     im = Image.fromarray(rgb, mode="RGB")
     if resize is not None and (im.size[0] != resize or im.size[1] != resize):
         im = im.resize((resize, resize), Image.Resampling.BICUBIC)
@@ -139,6 +209,9 @@ def export_qualitative_review(
     include_confident_errors: bool = False,
     manifest_json: Optional[Path] = None,
     manifest_split: str = "test",
+    patch_meta_csv: Optional[Path] = None,
+    patch_dataset: str = "auto",
+    overlay_pcam_center32_positive: bool = False,
 ) -> Path:
     """Sample buckets, write PNGs, CSVs, gallery.html. Returns *out_dir*."""
     npz_path = Path(npz_path)
@@ -166,6 +239,29 @@ def export_qualitative_review(
         print("prep→raw mapping:", manifest_used, f"({manifest_split}.kept_indices)")
     elif raw_x is not None:
         print("warning: no manifest.json next to preprocessed test_x; assuming raw row index == preprocessed row")
+
+    ds_kind = _infer_patch_dataset_kind(pre_x, patch_dataset)
+    draw_pcam_box = bool(overlay_pcam_center32_positive) and ds_kind == "pcam"
+    if overlay_pcam_center32_positive and ds_kind != "pcam":
+        print(
+            "warning: PCam center-32 overlay requested but patch-dataset looks like",
+            repr(ds_kind),
+            "; skipping box (PCam label geometry only).",
+        )
+
+    meta_df = None
+    if patch_meta_csv is not None:
+        pmeta = Path(patch_meta_csv)
+        if not pmeta.is_file():
+            raise FileNotFoundError(f"patch meta csv not found: {pmeta}")
+        meta_df = _load_patch_meta_csv(pmeta)
+        mx_raw = int(np.max(prep_to_raw)) if prep_to_raw.size else -1
+        if len(meta_df) <= mx_raw:
+            raise ValueError(
+                f"patch-meta-csv has {len(meta_df)} rows but raw row indices go up to {mx_raw}; "
+                "meta must be aligned row-for-row with raw test_x.h5 (including skipped QC rows)."
+            )
+        print("loaded patch meta:", pmeta, "rows=", len(meta_df))
 
     y_hat = (p >= 0.5).astype(np.int64)
     c = np.maximum(p, 1.0 - p)
@@ -213,15 +309,29 @@ def export_qualitative_review(
             pre_arr = _read_x_row(pre_x, i)
             resize = None if png_size <= 0 else int(png_size)
             rel_pre = fig_root / bucket_name / f"{case_id}_preprocessed.png"
-            _save_patch_png(pre_arr, rel_pre, resize)
+            _save_patch_png(
+                pre_arr,
+                rel_pre,
+                resize,
+                y_true=int(y[i]),
+                overlay_pcam_center32_positive=draw_pcam_box,
+            )
 
             rel_raw_path = ""
             raw_row = int(prep_to_raw[i])
             if raw_x is not None:
                 raw_arr = _read_x_row(raw_x, raw_row)
                 rel_raw = fig_root / bucket_name / f"{case_id}_raw.png"
-                _save_patch_png(raw_arr, rel_raw, resize)
+                _save_patch_png(
+                    raw_arr,
+                    rel_raw,
+                    resize,
+                    y_true=int(y[i]),
+                    overlay_pcam_center32_positive=draw_pcam_box,
+                )
                 rel_raw_path = str(rel_raw)
+
+            meta_cap = _meta_caption_for_raw_row(meta_df, raw_row) if meta_df is not None else ""
 
             row = {
                 "case_id": case_id,
@@ -240,6 +350,8 @@ def export_qualitative_review(
                 "direction": direction,
                 "npz_source": str(npz_path.resolve()),
             }
+            if meta_cap:
+                row["meta_caption"] = meta_cap
             if mc_std is not None:
                 row["prob_mc_std"] = float(mc_std[i])
             if raw_x is None:
@@ -269,6 +381,9 @@ def export_qualitative_review(
                         "split": manifest_split if manifest_used else None,
                     }
                 ),
+                "patch_dataset_inferred": ds_kind,
+                "overlay_pcam_center32_positive": draw_pcam_box,
+                "patch_meta_csv": str(patch_meta_csv) if patch_meta_csv else None,
                 "buckets": summary_rows,
                 "threshold": 0.5,
                 "probability_used": "prob_after_temperature (calibrated)",
@@ -297,7 +412,14 @@ def export_qualitative_review(
         for ro, r in enumerate(ordered):
             w.writerow([r["case_id"], r["h5_index"], r["bucket"], ro + 1] + [""] * len(checklist))
 
-    _write_index_html(out_dir, selected, condition_id, direction)
+    _write_index_html(
+        out_dir,
+        selected,
+        condition_id,
+        direction,
+        draw_pcam_box=draw_pcam_box,
+        meta_loaded=meta_df is not None,
+    )
 
     readme = out_dir / "README_REVIEW.txt"
     readme.write_text(
@@ -317,6 +439,9 @@ def export_qualitative_review(
                 "If raw images are missing, only preprocessed PNGs were written; pass raw_test_x",
                 "with the original split test_x.h5. Row alignment uses manifest.json kept_indices",
                 "(next to preprocessed test_x.h5) so each preprocessed row maps to the correct raw patch.",
+                "",
+                "Optional: --patch-meta-csv (one row per raw test_x row) adds slide/patch captions in gallery.html.",
+                "Optional PCam: --overlay-pcam-center32-positive draws the official center-32 label box when y_true=1.",
             ]
         ),
         encoding="utf-8",
@@ -335,6 +460,9 @@ def _write_index_html(
     rows: List[Dict[str, object]],
     condition_id: str,
     direction: str,
+    *,
+    draw_pcam_box: bool = False,
+    meta_loaded: bool = False,
 ) -> None:
     buckets: Dict[str, List[Dict[str, object]]] = {}
     for r in rows:
@@ -348,6 +476,17 @@ def _write_index_html(
         "<p>Open <code>selected_cases.csv</code> and <code>review_labels_template.csv</code> while viewing images. "
         "Checklist wording: <code>docs/qualitative_error_analysis_protocol.md</code> §6.</p>",
     ]
+    if draw_pcam_box:
+        parts.append(
+            "<p><b>PCam label overlay</b>: green rectangle = official region that defines a positive label "
+            "(center 32×32 px of the 96×96 patch must contain tumor; outer ring can contain tumor without y=1). "
+            "Drawn only when <code>y_true=1</code>.</p>"
+        )
+    if meta_loaded:
+        parts.append(
+            "<p><b>Meta caption</b>: slide / patch coordinates from <code>--patch-meta-csv</code> "
+            "(must have one row per raw <code>test_x.h5</code> row, same order as the public split file).</p>"
+        )
     for bname, items in sorted(buckets.items()):
         parts.append(f"<div class='b'><h2>{bname}</h2>")
         for r in items:
@@ -356,12 +495,16 @@ def _write_index_html(
             if r.get("figure_raw"):
                 relr = str(Path(r["figure_raw"]).relative_to(out_dir)).replace("\\", "/")
                 raw_html = f"<br/><img src='{relr}' width='224'/><div class='cap'>raw</div>"
+            cap = (
+                f"prep_idx={r['h5_index']} raw_idx={r.get('raw_h5_index', r['h5_index'])} y={r['y_true']} pred={r['y_hat']} "
+                f"p={float(r['p_cal']):.3f} c={float(r['confidence']):.3f} H={float(r['entropy']):.3f}"
+            )
+            if r.get("meta_caption"):
+                cap += "<br/>" + html.escape(str(r["meta_caption"]))
             parts.append(
                 f"<div style='display:inline-block;vertical-align:top;margin:8px;'>"
                 f"<img src='{rel}' width='224'/>{raw_html}"
-                f"<div class='cap'>prep_idx={r['h5_index']} raw_idx={r.get('raw_h5_index', r['h5_index'])} y={r['y_true']} pred={r['y_hat']} "
-                f"p={float(r['p_cal']):.3f} c={float(r['confidence']):.3f} H={float(r['entropy']):.3f}"
-                f"</div></div>"
+                f"<div class='cap'>{cap}</div></div>"
             )
         parts.append("</div>")
     parts.append("</body></html>")
@@ -383,10 +526,23 @@ def main() -> None:
     ap.add_argument("--n-per-bucket", type=int, default=10, help="target samples per bucket (protocol: 10)")
     ap.add_argument("--png-size", type=int, default=224, help="export square size (0 = native H5 resolution)")
     ap.add_argument("--include-confident-errors", action="store_true", help="extra bucket CE (methodology §6)")
+    ap.add_argument("--patch-meta-csv", type=str, default="", help="optional CSV, one row per raw test_x row (captions)")
+    ap.add_argument(
+        "--patch-dataset",
+        type=str,
+        default="auto",
+        help="pcam | cam17 | camelyon17 | auto (used with PCam center-box overlay)",
+    )
+    ap.add_argument(
+        "--overlay-pcam-center32-positive",
+        action="store_true",
+        help="draw PCam official center 32x32 label box when y_true=1 (PCam patches only)",
+    )
     args = ap.parse_args()
 
     raw = Path(args.raw_test_x) if args.raw_test_x.strip() else None
     man = Path(args.manifest_json) if args.manifest_json.strip() else None
+    pmeta = Path(args.patch_meta_csv) if args.patch_meta_csv.strip() else None
     export_qualitative_review(
         Path(args.npz),
         Path(args.preprocessed_test_x),
@@ -400,6 +556,9 @@ def main() -> None:
         include_confident_errors=args.include_confident_errors,
         manifest_json=man,
         manifest_split=args.manifest_split,
+        patch_meta_csv=pmeta,
+        patch_dataset=args.patch_dataset,
+        overlay_pcam_center32_positive=bool(args.overlay_pcam_center32_positive),
     )
 
 

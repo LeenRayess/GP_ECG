@@ -69,6 +69,7 @@ print("[cnn_baseline] importing numpy, torch…", flush=True)
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 
@@ -411,6 +412,17 @@ def _auc_only(y: np.ndarray, prob: np.ndarray) -> float:
     return float(roc_auc_score(y, p))
 
 
+def _val_loss_acc_from_logits(logits: np.ndarray, y: np.ndarray) -> Tuple[float, float]:
+    """Mean BCE-with-logits and threshold-0.5 accuracy on full validation (same loss as training)."""
+    z = torch.from_numpy(np.asarray(logits, dtype=np.float32)).view(-1)
+    t = torch.from_numpy(np.asarray(y, dtype=np.float32)).view(-1)
+    with torch.no_grad():
+        loss = F.binary_cross_entropy_with_logits(z, t, reduction="mean").item()
+        pred = (torch.sigmoid(z) >= 0.5).float()
+        acc = (pred == t).float().mean().item()
+    return float(loss), float(acc)
+
+
 def train_one_arm(
     sp: SplitPaths,
     out_dir: Path,
@@ -551,11 +563,14 @@ def train_one_arm(
         val_logits, val_y = collect_logits(model, val_loader, device, desc=f"{sp.arm_name} val ep{epoch+1}")
         val_prob = _sigmoid_stable(val_logits)
         val_auc = _auc_only(val_y, val_prob)
+        val_loss, val_accuracy = _val_loss_acc_from_logits(val_logits, val_y)
 
         rec = {
             "epoch": int(epoch + 1),
             "train_loss": float(train_loss),
             "train_accuracy": float(train_acc),
+            "val_loss": float(val_loss),
+            "val_accuracy": float(val_accuracy),
             "val_roc_auc_raw_sigmoid": float(val_auc),
         }
         history.append(rec)
@@ -590,7 +605,8 @@ def train_one_arm(
         )
         print(
             f"\n  [{sp.arm_name}] Epoch {epoch+1} summary: train_loss={train_loss:.4f}  "
-            f"train_acc={train_acc:.4f}  val_auc={val_auc:.4f}  best_val_auc={best_auc:.4f}",
+            f"train_acc={train_acc:.4f}  val_loss={val_loss:.4f}  val_acc={val_accuracy:.4f}  "
+            f"val_auc={val_auc:.4f}  best_val_auc={best_auc:.4f}",
             flush=True,
         )
 

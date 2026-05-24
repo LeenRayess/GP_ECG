@@ -1,0 +1,945 @@
+{
+  "eval_root": "C:\\GP_ECG\\experiments\\virchow_colab\\evals_cross_domain",
+  "n_bootstrap": 2000,
+  "n_permutation": 10000,
+  "seed": 42,
+  "probability_branch": "prob_after_temperature",
+  "per_condition": {
+    "C1": {
+      "folder": "pcam_trained_on_pcam_test",
+      "trained_on": "PCam",
+      "tested_on": "PCam",
+      "n_test": 27704,
+      "metrics": {
+        "point": {
+          "roc_auc": 0.9813234089604314,
+          "average_precision": 0.9820127822307957,
+          "accuracy": 0.936687842910771,
+          "balanced_accuracy": 0.9339203258521396,
+          "precision": 0.9701580363147276,
+          "recall": 0.891885625965997,
+          "f1": 0.9293767112256401,
+          "brier_score": 0.0485584974408218,
+          "log_loss": 0.1702157075308619,
+          "ece_15": 0.019974970404729342
+        },
+        "ci95": {
+          "roc_auc": {
+            "low": 0.9798930024364558,
+            "high": 0.982801492887729
+          },
+          "average_precision": {
+            "low": 0.9805274361706572,
+            "high": 0.983390873880352
+          },
+          "accuracy": {
+            "low": 0.9337640773895466,
+            "high": 0.9395764149581287
+          },
+          "balanced_accuracy": {
+            "low": 0.9308283160144931,
+            "high": 0.9369395510294468
+          },
+          "precision": {
+            "low": 0.9669613390472214,
+            "high": 0.9731756957582183
+          },
+          "recall": {
+            "low": 0.8863090290742085,
+            "high": 0.8973121615276948
+          },
+          "f1": {
+            "low": 0.9259193327097355,
+            "high": 0.9326719668546904
+          },
+          "brier_score": {
+            "low": 0.04664295941496502,
+            "high": 0.050512203015816916
+          },
+          "log_loss": {
+            "low": 0.16404765655481093,
+            "high": 0.1764130524455324
+          },
+          "ece_15": {
+            "low": 0.017610688397257906,
+            "high": 0.022685262431679093
+          }
+        }
+      }
+    },
+    "C2": {
+      "folder": "pcam_trained_on_cam17_test",
+      "trained_on": "PCam",
+      "tested_on": "CAMELYON17",
+      "n_test": 83181,
+      "metrics": {
+        "point": {
+          "roc_auc": 0.9970595202838684,
+          "average_precision": 0.9977482030042891,
+          "accuracy": 0.9840107716906505,
+          "balanced_accuracy": 0.9840549103304521,
+          "precision": 0.9866559409454407,
+          "recall": 0.9819628897051897,
+          "f1": 0.9843038213704061,
+          "brier_score": 0.013411790176728135,
+          "log_loss": 0.0558807962998077,
+          "ece_15": 0.010043153532873031
+        },
+        "ci95": {
+          "roc_auc": {
+            "low": 0.9967399467987095,
+            "high": 0.9973526799125366
+          },
+          "average_precision": {
+            "low": 0.9975339435845989,
+            "high": 0.9979472120223105
+          },
+          "accuracy": {
+            "low": 0.9831809547853476,
+            "high": 0.984864331998894
+          },
+          "balanced_accuracy": {
+            "low": 0.9832202446548244,
+            "high": 0.9849052579305669
+          },
+          "precision": {
+            "low": 0.98557845748867,
+            "high": 0.9877399116559682
+          },
+          "recall": {
+            "low": 0.9806997342947539,
+            "high": 0.983174086660187
+          },
+          "f1": {
+            "low": 0.9834824083229973,
+            "high": 0.9851412070589277
+          },
+          "brier_score": {
+            "low": 0.012836009817087365,
+            "high": 0.013972681265984955
+          },
+          "log_loss": {
+            "low": 0.05388636223533569,
+            "high": 0.057854746041189835
+          },
+          "ece_15": {
+            "low": 0.009384111241812643,
+            "high": 0.010844564491335468
+          }
+        }
+      }
+    },
+    "C3": {
+      "folder": "cam17_trained_on_cam17_test",
+      "trained_on": "CAMELYON17",
+      "tested_on": "CAMELYON17",
+      "n_test": 83181,
+      "metrics": {
+        "point": {
+          "roc_auc": 0.9965691260357685,
+          "average_precision": 0.9972046290945731,
+          "accuracy": 0.9798271239826403,
+          "balanced_accuracy": 0.979801391912805,
+          "precision": 0.9794987539380261,
+          "recall": 0.9810210040501083,
+          "f1": 0.9802592880167526,
+          "brier_score": 0.017355813119068707,
+          "log_loss": 0.07121530113925538,
+          "ece_15": 0.020613474086777182
+        },
+        "ci95": {
+          "roc_auc": {
+            "low": 0.9962628014365581,
+            "high": 0.9968695821595602
+          },
+          "average_precision": {
+            "low": 0.9969689398576017,
+            "high": 0.9974331824518468
+          },
+          "accuracy": {
+            "low": 0.9788289994109232,
+            "high": 0.9807648381240909
+          },
+          "balanced_accuracy": {
+            "low": 0.978795444835397,
+            "high": 0.9807399316697937
+          },
+          "precision": {
+            "low": 0.9781600122567472,
+            "high": 0.9808525154353563
+          },
+          "recall": {
+            "low": 0.9796533918668976,
+            "high": 0.9822525422381609
+          },
+          "f1": {
+            "low": 0.9792711733485523,
+            "high": 0.9811869276958917
+          },
+          "brier_score": {
+            "low": 0.016776939371545778,
+            "high": 0.017944130927701536
+          },
+          "log_loss": {
+            "low": 0.06924743682377396,
+            "high": 0.07321644328149464
+          },
+          "ece_15": {
+            "low": 0.019803653229142383,
+            "high": 0.02155633504835448
+          }
+        }
+      }
+    },
+    "C4": {
+      "folder": "cam17_trained_on_pcam_test",
+      "trained_on": "CAMELYON17",
+      "tested_on": "PCam",
+      "n_test": 27704,
+      "metrics": {
+        "point": {
+          "roc_auc": 0.9502370657436925,
+          "average_precision": 0.9530290012342095,
+          "accuracy": 0.8236716719607277,
+          "balanced_accuracy": 0.8117311229914279,
+          "precision": 0.9876498365419543,
+          "recall": 0.630370942812983,
+          "f1": 0.7695646021038729,
+          "brier_score": 0.13627895646698054,
+          "log_loss": 0.4716230040553316,
+          "ece_15": 0.16004926628190538
+        },
+        "ci95": {
+          "roc_auc": {
+            "low": 0.9478254533974991,
+            "high": 0.9526401620760001
+          },
+          "average_precision": {
+            "low": 0.9506373132250219,
+            "high": 0.95542884156655
+          },
+          "accuracy": {
+            "low": 0.8193753609587063,
+            "high": 0.828148462315911
+          },
+          "balanced_accuracy": {
+            "low": 0.807749304412687,
+            "high": 0.8159539736367746
+          },
+          "precision": {
+            "low": 0.9851650988789912,
+            "high": 0.9898431426261396
+          },
+          "recall": {
+            "low": 0.6224308703972157,
+            "high": 0.638676927093709
+          },
+          "f1": {
+            "low": 0.7635460579182316,
+            "high": 0.7758418790718523
+          },
+          "brier_score": {
+            "low": 0.13311512707904055,
+            "high": 0.13960184798563158
+          },
+          "log_loss": {
+            "low": 0.4598289172379432,
+            "high": 0.48376034128241224
+          },
+          "ece_15": {
+            "low": 0.15621895384280374,
+            "high": 0.1639191463714896
+          }
+        }
+      }
+    }
+  },
+  "transfer_drops": {
+    "PCam_trained": {
+      "in_domain": "C1",
+      "external": "C2",
+      "note": "Different test splits (PCam vs CAM17); drop CIs are marginal per arm, not paired.",
+      "marginal_delta_abs": {
+        "roc_auc": {
+          "point_in": 0.9813234089604314,
+          "point_ext": 0.9970595202838684,
+          "point_delta_in_minus_ext": -0.015736111323436996,
+          "ci95_in": {
+            "low": 0.9798930024364558,
+            "high": 0.982801492887729
+          },
+          "ci95_ext": {
+            "low": 0.9967399467987095,
+            "high": 0.9973526799125366
+          }
+        },
+        "average_precision": {
+          "point_in": 0.9820127822307957,
+          "point_ext": 0.9977482030042891,
+          "point_delta_in_minus_ext": -0.015735420773493436,
+          "ci95_in": {
+            "low": 0.9805274361706572,
+            "high": 0.983390873880352
+          },
+          "ci95_ext": {
+            "low": 0.9975339435845989,
+            "high": 0.9979472120223105
+          }
+        },
+        "accuracy": {
+          "point_in": 0.936687842910771,
+          "point_ext": 0.9840107716906505,
+          "point_delta_in_minus_ext": -0.047322928779879536,
+          "ci95_in": {
+            "low": 0.9337640773895466,
+            "high": 0.9395764149581287
+          },
+          "ci95_ext": {
+            "low": 0.9831809547853476,
+            "high": 0.984864331998894
+          }
+        },
+        "balanced_accuracy": {
+          "point_in": 0.9339203258521396,
+          "point_ext": 0.9840549103304521,
+          "point_delta_in_minus_ext": -0.05013458447831254,
+          "ci95_in": {
+            "low": 0.9308283160144931,
+            "high": 0.9369395510294468
+          },
+          "ci95_ext": {
+            "low": 0.9832202446548244,
+            "high": 0.9849052579305669
+          }
+        },
+        "precision": {
+          "point_in": 0.9701580363147276,
+          "point_ext": 0.9866559409454407,
+          "point_delta_in_minus_ext": -0.0164979046307131,
+          "ci95_in": {
+            "low": 0.9669613390472214,
+            "high": 0.9731756957582183
+          },
+          "ci95_ext": {
+            "low": 0.98557845748867,
+            "high": 0.9877399116559682
+          }
+        },
+        "recall": {
+          "point_in": 0.891885625965997,
+          "point_ext": 0.9819628897051897,
+          "point_delta_in_minus_ext": -0.09007726373919278,
+          "ci95_in": {
+            "low": 0.8863090290742085,
+            "high": 0.8973121615276948
+          },
+          "ci95_ext": {
+            "low": 0.9806997342947539,
+            "high": 0.983174086660187
+          }
+        },
+        "f1": {
+          "point_in": 0.9293767112256401,
+          "point_ext": 0.9843038213704061,
+          "point_delta_in_minus_ext": -0.05492711014476592,
+          "ci95_in": {
+            "low": 0.9259193327097355,
+            "high": 0.9326719668546904
+          },
+          "ci95_ext": {
+            "low": 0.9834824083229973,
+            "high": 0.9851412070589277
+          }
+        },
+        "brier_score": {
+          "point_in": 0.0485584974408218,
+          "point_ext": 0.013411790176728135,
+          "point_delta_in_minus_ext": 0.03514670726409366,
+          "ci95_in": {
+            "low": 0.04664295941496502,
+            "high": 0.050512203015816916
+          },
+          "ci95_ext": {
+            "low": 0.012836009817087365,
+            "high": 0.013972681265984955
+          }
+        },
+        "log_loss": {
+          "point_in": 0.1702157075308619,
+          "point_ext": 0.0558807962998077,
+          "point_delta_in_minus_ext": 0.1143349112310542,
+          "ci95_in": {
+            "low": 0.16404765655481093,
+            "high": 0.1764130524455324
+          },
+          "ci95_ext": {
+            "low": 0.05388636223533569,
+            "high": 0.057854746041189835
+          }
+        },
+        "ece_15": {
+          "point_in": 0.019974970404729342,
+          "point_ext": 0.010043153532873031,
+          "point_delta_in_minus_ext": 0.00993181687185631,
+          "ci95_in": {
+            "low": 0.017610688397257906,
+            "high": 0.022685262431679093
+          },
+          "ci95_ext": {
+            "low": 0.009384111241812643,
+            "high": 0.010844564491335468
+          }
+        }
+      }
+    },
+    "CAMELYON17_trained": {
+      "in_domain": "C3",
+      "external": "C4",
+      "note": "Different test splits; marginal deltas only.",
+      "marginal_delta_abs": {
+        "roc_auc": {
+          "point_in": 0.9965691260357685,
+          "point_ext": 0.9502370657436925,
+          "point_delta_in_minus_ext": 0.04633206029207604,
+          "ci95_in": {
+            "low": 0.9962628014365581,
+            "high": 0.9968695821595602
+          },
+          "ci95_ext": {
+            "low": 0.9478254533974991,
+            "high": 0.9526401620760001
+          }
+        },
+        "average_precision": {
+          "point_in": 0.9972046290945731,
+          "point_ext": 0.9530290012342095,
+          "point_delta_in_minus_ext": 0.04417562786036355,
+          "ci95_in": {
+            "low": 0.9969689398576017,
+            "high": 0.9974331824518468
+          },
+          "ci95_ext": {
+            "low": 0.9506373132250219,
+            "high": 0.95542884156655
+          }
+        },
+        "accuracy": {
+          "point_in": 0.9798271239826403,
+          "point_ext": 0.8236716719607277,
+          "point_delta_in_minus_ext": 0.1561554520219126,
+          "ci95_in": {
+            "low": 0.9788289994109232,
+            "high": 0.9807648381240909
+          },
+          "ci95_ext": {
+            "low": 0.8193753609587063,
+            "high": 0.828148462315911
+          }
+        },
+        "balanced_accuracy": {
+          "point_in": 0.979801391912805,
+          "point_ext": 0.8117311229914279,
+          "point_delta_in_minus_ext": 0.1680702689213771,
+          "ci95_in": {
+            "low": 0.978795444835397,
+            "high": 0.9807399316697937
+          },
+          "ci95_ext": {
+            "low": 0.807749304412687,
+            "high": 0.8159539736367746
+          }
+        },
+        "precision": {
+          "point_in": 0.9794987539380261,
+          "point_ext": 0.9876498365419543,
+          "point_delta_in_minus_ext": -0.008151082603928161,
+          "ci95_in": {
+            "low": 0.9781600122567472,
+            "high": 0.9808525154353563
+          },
+          "ci95_ext": {
+            "low": 0.9851650988789912,
+            "high": 0.9898431426261396
+          }
+        },
+        "recall": {
+          "point_in": 0.9810210040501083,
+          "point_ext": 0.630370942812983,
+          "point_delta_in_minus_ext": 0.3506500612371253,
+          "ci95_in": {
+            "low": 0.9796533918668976,
+            "high": 0.9822525422381609
+          },
+          "ci95_ext": {
+            "low": 0.6224308703972157,
+            "high": 0.638676927093709
+          }
+        },
+        "f1": {
+          "point_in": 0.9802592880167526,
+          "point_ext": 0.7695646021038729,
+          "point_delta_in_minus_ext": 0.21069468591287965,
+          "ci95_in": {
+            "low": 0.9792711733485523,
+            "high": 0.9811869276958917
+          },
+          "ci95_ext": {
+            "low": 0.7635460579182316,
+            "high": 0.7758418790718523
+          }
+        },
+        "brier_score": {
+          "point_in": 0.017355813119068707,
+          "point_ext": 0.13627895646698054,
+          "point_delta_in_minus_ext": -0.11892314334791183,
+          "ci95_in": {
+            "low": 0.016776939371545778,
+            "high": 0.017944130927701536
+          },
+          "ci95_ext": {
+            "low": 0.13311512707904055,
+            "high": 0.13960184798563158
+          }
+        },
+        "log_loss": {
+          "point_in": 0.07121530113925538,
+          "point_ext": 0.4716230040553316,
+          "point_delta_in_minus_ext": -0.4004077029160762,
+          "ci95_in": {
+            "low": 0.06924743682377396,
+            "high": 0.07321644328149464
+          },
+          "ci95_ext": {
+            "low": 0.4598289172379432,
+            "high": 0.48376034128241224
+          }
+        },
+        "ece_15": {
+          "point_in": 0.020613474086777182,
+          "point_ext": 0.16004926628190538,
+          "point_delta_in_minus_ext": -0.1394357921951282,
+          "ci95_in": {
+            "low": 0.019803653229142383,
+            "high": 0.02155633504835448
+          },
+          "ci95_ext": {
+            "low": 0.15621895384280374,
+            "high": 0.1639191463714896
+          }
+        }
+      }
+    },
+    "paired_on_PCam_test": {
+      "delta_abs": {
+        "roc_auc": {
+          "point_in": 0.9813234089604314,
+          "point_ext": 0.9502370657436925,
+          "point_delta": 0.031086343216738865,
+          "ci95_low": 0.02903603795647021,
+          "ci95_high": 0.03312411227591498,
+          "excludes_zero": true
+        },
+        "average_precision": {
+          "point_in": 0.9820127822307957,
+          "point_ext": 0.9530290012342095,
+          "point_delta": 0.02898378099658616,
+          "ci95_low": 0.02712669740273521,
+          "ci95_high": 0.030843254304925558,
+          "excludes_zero": true
+        },
+        "accuracy": {
+          "point_in": 0.936687842910771,
+          "point_ext": 0.8236716719607277,
+          "point_delta": 0.11301617095004335,
+          "ci95_low": 0.10911781692174416,
+          "ci95_high": 0.11716719607276926,
+          "excludes_zero": true
+        },
+        "balanced_accuracy": {
+          "point_in": 0.9339203258521396,
+          "point_ext": 0.8117311229914279,
+          "point_delta": 0.12218920286071167,
+          "ci95_low": 0.1183397125704333,
+          "ci95_high": 0.12619484308233378,
+          "excludes_zero": true
+        },
+        "precision": {
+          "point_in": 0.9701580363147276,
+          "point_ext": 0.9876498365419543,
+          "point_delta": -0.017491800227226628,
+          "ci95_low": -0.020836797764250722,
+          "ci95_high": -0.0141733792029928,
+          "excludes_zero": true
+        },
+        "recall": {
+          "point_in": 0.891885625965997,
+          "point_ext": 0.630370942812983,
+          "point_delta": 0.26151468315301396,
+          "ci95_low": 0.2539315145672762,
+          "ci95_high": 0.2690745036737702,
+          "excludes_zero": true
+        },
+        "f1": {
+          "point_in": 0.9293767112256401,
+          "point_ext": 0.7695646021038729,
+          "point_delta": 0.15981210912176724,
+          "ci95_low": 0.15428943414213306,
+          "ci95_high": 0.16558135347908873,
+          "excludes_zero": true
+        },
+        "brier_score": {
+          "point_in": 0.0485584974408218,
+          "point_ext": 0.13627895646698054,
+          "point_delta": -0.08772045902615874,
+          "ci95_low": -0.09048248648563903,
+          "ci95_high": -0.08519569758795341,
+          "excludes_zero": true
+        },
+        "log_loss": {
+          "point_in": 0.1702157075308619,
+          "point_ext": 0.4716230040553316,
+          "point_delta": -0.3014072965244697,
+          "ci95_low": -0.3112626165047343,
+          "ci95_high": -0.29212059561508896,
+          "excludes_zero": true
+        },
+        "ece_15": {
+          "point_in": 0.019974970404729342,
+          "point_ext": 0.16004926628190538,
+          "point_delta": -0.14007429587717604,
+          "ci95_low": -0.14280318292470603,
+          "ci95_high": -0.1367631067948667,
+          "excludes_zero": true
+        }
+      },
+      "delta_rel": {
+        "roc_auc": {
+          "point_in": 0.9813234089604314,
+          "point_ext": 0.9502370657436925,
+          "point_delta": 0.031086343216738865,
+          "ci95_low": 0.029601924553241482,
+          "ci95_high": 0.03376643184978908,
+          "excludes_zero": true
+        },
+        "average_precision": {
+          "point_in": 0.9820127822307957,
+          "point_ext": 0.9530290012342095,
+          "point_delta": 0.02898378099658616,
+          "ci95_low": 0.02762510924955606,
+          "ci95_high": 0.031431765489923096,
+          "excludes_zero": true
+        },
+        "accuracy": {
+          "point_in": 0.936687842910771,
+          "point_ext": 0.8236716719607277,
+          "point_delta": 0.11301617095004335,
+          "ci95_low": 0.11654520015910606,
+          "ci95_high": 0.12500024077342414,
+          "excludes_zero": true
+        },
+        "balanced_accuracy": {
+          "point_in": 0.9339203258521396,
+          "point_ext": 0.8117311229914279,
+          "point_delta": 0.12218920286071167,
+          "ci95_low": 0.12676958827919665,
+          "ci95_high": 0.13500018691047783,
+          "excludes_zero": true
+        },
+        "precision": {
+          "point_in": 0.9701580363147276,
+          "point_ext": 0.9876498365419543,
+          "point_delta": -0.017491800227226628,
+          "ci95_low": -0.0215219926798006,
+          "ci95_high": -0.01457970298947004,
+          "excludes_zero": true
+        },
+        "recall": {
+          "point_in": 0.891885625965997,
+          "point_ext": 0.630370942812983,
+          "point_delta": 0.26151468315301396,
+          "ci95_low": 0.2849720237402282,
+          "ci95_high": 0.3014059723313904,
+          "excludes_zero": true
+        },
+        "f1": {
+          "point_in": 0.9293767112256401,
+          "point_ext": 0.7695646021038729,
+          "point_delta": 0.15981210912176724,
+          "ci95_low": 0.16606966823930275,
+          "ci95_high": 0.1781678625037861,
+          "excludes_zero": true
+        },
+        "brier_score": {
+          "point_in": 0.0485584974408218,
+          "point_ext": 0.13627895646698054,
+          "point_delta": -0.08772045902615874,
+          "ci95_low": -1.8960719832056323,
+          "ci95_high": -1.7233976077857611,
+          "excludes_zero": true
+        },
+        "log_loss": {
+          "point_in": 0.1702157075308619,
+          "point_ext": 0.4716230040553316,
+          "point_delta": -0.3014072965244697,
+          "ci95_low": -1.851106435707583,
+          "ci95_high": -1.6943162892956058,
+          "excludes_zero": true
+        },
+        "ece_15": {
+          "point_in": 0.019974970404729342,
+          "point_ext": 0.16004926628190538,
+          "point_delta": -0.14007429587717604,
+          "ci95_low": -7.787085203075067,
+          "ci95_high": -6.152865186865512,
+          "excludes_zero": true
+        }
+      },
+      "interpretation": "Each replicate: M from C1 minus M from C4 on the same resampled PCam test patches (PCam-trained vs CAMELYON17-trained)."
+    },
+    "paired_on_CAM17_test": {
+      "delta_abs": {
+        "roc_auc": {
+          "point_in": 0.9965691260357685,
+          "point_ext": 0.9970595202838684,
+          "point_delta": -0.0004903942480998236,
+          "ci95_low": -0.0008122691826146583,
+          "ci95_high": -0.00016812690930256843,
+          "excludes_zero": true
+        },
+        "average_precision": {
+          "point_in": 0.9972046290945731,
+          "point_ext": 0.9977482030042891,
+          "point_delta": -0.0005435739097160441,
+          "ci95_low": -0.0007674987596910182,
+          "ci95_high": -0.00033032975139368504,
+          "excludes_zero": true
+        },
+        "accuracy": {
+          "point_in": 0.9798271239826403,
+          "point_ext": 0.9840107716906505,
+          "point_delta": -0.004183647708010274,
+          "ci95_low": -0.0051213618494607704,
+          "ci95_high": -0.003257955542732116,
+          "excludes_zero": true
+        },
+        "balanced_accuracy": {
+          "point_in": 0.979801391912805,
+          "point_ext": 0.9840549103304521,
+          "point_delta": -0.004253518417647095,
+          "ci95_low": -0.005183140357505181,
+          "ci95_high": -0.0033136300146294237,
+          "excludes_zero": true
+        },
+        "precision": {
+          "point_in": 0.9794987539380261,
+          "point_ext": 0.9866559409454407,
+          "point_delta": -0.007157187007414634,
+          "ci95_low": -0.00854716747911946,
+          "ci95_high": -0.005792623422540875,
+          "excludes_zero": true
+        },
+        "recall": {
+          "point_in": 0.9810210040501083,
+          "point_ext": 0.9819628897051897,
+          "point_delta": -0.0009418856550814647,
+          "ci95_low": -0.0021164271037435512,
+          "ci95_high": 0.00023684202813885867,
+          "excludes_zero": false
+        },
+        "f1": {
+          "point_in": 0.9802592880167526,
+          "point_ext": 0.9843038213704061,
+          "point_delta": -0.004044533353653512,
+          "ci95_low": -0.004962918922509099,
+          "ci95_high": -0.003145561781887776,
+          "excludes_zero": true
+        },
+        "brier_score": {
+          "point_in": 0.017355813119068707,
+          "point_ext": 0.013411790176728135,
+          "point_delta": 0.003944022942340572,
+          "ci95_low": 0.003445258824441251,
+          "ci95_high": 0.004468326579866863,
+          "excludes_zero": true
+        },
+        "log_loss": {
+          "point_in": 0.07121530113925538,
+          "point_ext": 0.0558807962998077,
+          "point_delta": 0.015334504839447677,
+          "ci95_low": 0.013636141305078927,
+          "ci95_high": 0.01708751041078132,
+          "excludes_zero": true
+        },
+        "ece_15": {
+          "point_in": 0.020613474086777182,
+          "point_ext": 0.010043153532873031,
+          "point_delta": 0.010570320553904151,
+          "ci95_low": 0.009691323279308495,
+          "ci95_high": 0.011369678765810883,
+          "excludes_zero": true
+        }
+      },
+      "delta_rel": {
+        "roc_auc": {
+          "point_in": 0.9965691260357685,
+          "point_ext": 0.9970595202838684,
+          "point_delta": -0.0004903942480998236,
+          "ci95_low": -0.0008151329240821926,
+          "ci95_high": -0.00016867865658788304,
+          "excludes_zero": true
+        },
+        "average_precision": {
+          "point_in": 0.9972046290945731,
+          "point_ext": 0.9977482030042891,
+          "point_delta": -0.0005435739097160441,
+          "ci95_low": -0.0007698759926833754,
+          "ci95_high": -0.0003312035395146247,
+          "excludes_zero": true
+        },
+        "accuracy": {
+          "point_in": 0.9798271239826403,
+          "point_ext": 0.9840107716906505,
+          "point_delta": -0.004183647708010274,
+          "ci95_low": -0.005229247574966264,
+          "ci95_high": -0.003324790314772444,
+          "excludes_zero": true
+        },
+        "balanced_accuracy": {
+          "point_in": 0.979801391912805,
+          "point_ext": 0.9840549103304521,
+          "point_delta": -0.004253518417647095,
+          "ci95_low": -0.005294362332910501,
+          "ci95_high": -0.003381399454488821,
+          "excludes_zero": true
+        },
+        "precision": {
+          "point_in": 0.9794987539380261,
+          "point_ext": 0.9866559409454407,
+          "point_delta": -0.007157187007414634,
+          "ci95_low": -0.008737879025618206,
+          "ci95_high": -0.005905692777740411,
+          "excludes_zero": true
+        },
+        "recall": {
+          "point_in": 0.9810210040501083,
+          "point_ext": 0.9819628897051897,
+          "point_delta": -0.0009418856550814647,
+          "ci95_low": -0.0021597805667773547,
+          "ci95_high": 0.00024114285170775412,
+          "excludes_zero": false
+        },
+        "f1": {
+          "point_in": 0.9802592880167526,
+          "point_ext": 0.9843038213704061,
+          "point_delta": -0.004044533353653512,
+          "ci95_low": -0.005065396721784592,
+          "ci95_high": -0.0032065065092490444,
+          "excludes_zero": true
+        },
+        "brier_score": {
+          "point_in": 0.017355813119068707,
+          "point_ext": 0.013411790176728135,
+          "point_delta": 0.003944022942340572,
+          "ci95_low": 0.2011328997136688,
+          "ci95_high": 0.2535810238435824,
+          "excludes_zero": true
+        },
+        "log_loss": {
+          "point_in": 0.07121530113925538,
+          "point_ext": 0.0558807962998077,
+          "point_delta": 0.015334504839447677,
+          "ci95_low": 0.19328282093935434,
+          "ci95_high": 0.23734769865012798,
+          "excludes_zero": true
+        },
+        "ece_15": {
+          "point_in": 0.020613474086777182,
+          "point_ext": 0.010043153532873031,
+          "point_delta": 0.010570320553904151,
+          "ci95_low": 0.47594034476802566,
+          "ci95_high": 0.5415406649023612,
+          "excludes_zero": true
+        }
+      },
+      "interpretation": "Each replicate: M from C3 minus M from C2 on the same resampled CAM17 test patches."
+    }
+  },
+  "drop_asymmetry": {
+    "roc_auc": {
+      "paired_PCam_test_delta_C1_minus_C4": 0.031086343216738865,
+      "paired_CAM17_test_delta_C3_minus_C2": -0.0004903942480998236,
+      "note": "Asymmetry read qualitatively from transfer narrative; formal joint test not prespecified."
+    },
+    "accuracy": {
+      "paired_PCam_test_delta_C1_minus_C4": 0.11301617095004335,
+      "paired_CAM17_test_delta_C3_minus_C2": -0.004183647708010274,
+      "note": "Asymmetry read qualitatively from transfer narrative; formal joint test not prespecified."
+    },
+    "brier_score": {
+      "paired_PCam_test_delta_C1_minus_C4": -0.08772045902615874,
+      "paired_CAM17_test_delta_C3_minus_C2": 0.003944022942340572,
+      "note": "Asymmetry read qualitatively from transfer narrative; formal joint test not prespecified."
+    },
+    "ece_15": {
+      "paired_PCam_test_delta_C1_minus_C4": -0.14007429587717604,
+      "paired_CAM17_test_delta_C3_minus_C2": 0.010570320553904151,
+      "note": "Asymmetry read qualitatively from transfer narrative; formal joint test not prespecified."
+    }
+  },
+  "paired_permutation_tests": [
+    {
+      "test_id": "PCam_test_C1_vs_C4_brier",
+      "comparison": "PCam-trained (C1) vs CAMELYON17-trained (C4) on PCam test",
+      "metric": "mean per-case Brier contribution (A minus B)",
+      "p_value": 9.999000099990002e-05,
+      "tier": "confirmatory"
+    },
+    {
+      "test_id": "PCam_test_C1_vs_C4_log_loss",
+      "comparison": "PCam-trained (C1) vs CAMELYON17-trained (C4) on PCam test",
+      "metric": "mean per-case NLL contribution (A minus B)",
+      "p_value": 9.999000099990002e-05,
+      "tier": "confirmatory"
+    },
+    {
+      "test_id": "CAM17_test_C3_vs_C2_brier",
+      "comparison": "CAMELYON17-trained (C3) vs PCam-trained (C2) on CAMELYON17 test",
+      "metric": "mean per-case Brier contribution (A minus B)",
+      "p_value": 9.999000099990002e-05,
+      "tier": "confirmatory"
+    },
+    {
+      "test_id": "CAM17_test_C3_vs_C2_log_loss",
+      "comparison": "CAMELYON17-trained (C3) vs PCam-trained (C2) on CAMELYON17 test",
+      "metric": "mean per-case NLL contribution (A minus B)",
+      "p_value": 9.999000099990002e-05,
+      "tier": "confirmatory"
+    }
+  ],
+  "benjamini_hochberg_confirmatory": [
+    {
+      "test_id": "PCam_test_C1_vs_C4_brier",
+      "p": 9.999000099990002e-05,
+      "p_bh": 9.999000099990002e-05,
+      "reject_bh_q005": true
+    },
+    {
+      "test_id": "PCam_test_C1_vs_C4_log_loss",
+      "p": 9.999000099990002e-05,
+      "p_bh": 9.999000099990002e-05,
+      "reject_bh_q005": true
+    },
+    {
+      "test_id": "CAM17_test_C3_vs_C2_brier",
+      "p": 9.999000099990002e-05,
+      "p_bh": 9.999000099990002e-05,
+      "reject_bh_q005": true
+    },
+    {
+      "test_id": "CAM17_test_C3_vs_C2_log_loss",
+      "p": 9.999000099990002e-05,
+      "p_bh": 9.999000099990002e-05,
+      "reject_bh_q005": true
+    }
+  ]
+}

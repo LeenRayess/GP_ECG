@@ -12,3 +12,6 @@ Direction label: PCam_train -> CAMELYON17_test
 If raw images are missing, only preprocessed PNGs were written; pass raw_test_x
 with the original split test_x.h5. Row alignment uses manifest.json kept_indices
 (next to preprocessed test_x.h5) so each preprocessed row maps to the correct raw patch.
+
+Optional: --patch-meta-csv (one row per raw test_x row) adds slide/patch captions in gallery.html.
+Optional PCam: --overlay-pcam-center32-positive draws the official center-32 label box when y_true=1.

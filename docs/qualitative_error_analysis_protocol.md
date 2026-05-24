@@ -57,6 +57,8 @@ For each selected case, store:
 - raw patch image,
 - preprocessed patch image,
 - alignment note: preprocessed `test_x.h5` rows follow the evaluation manifest; the matching row in the **original** raw `test_x.h5` is `manifest.json` → `test.kept_indices[prep_row]` (not necessarily the same integer as `prep_row` when quality filtering removed patches),
+- optional **PCam** visual aid: green rectangle on `y_true=1` patches marking the official **center 32×32 px** region that defines a positive label (Veeling et al.; outer ring may still contain tumor without `y=1`),
+- optional **meta caption** (PCam `*_test_meta.csv` or any CSV with **one row per raw test row**, same order): slide id and patch coordinates as text under thumbnails in `gallery.html`,
 - true label and predicted label,
 - predicted probability,
 - uncertainty statistic(s),
@@ -75,7 +77,7 @@ For each case, mark each item as Present / Absent / Unclear:
 5. Color/stain atypia relative to typical in-domain appearance
 6. Patch-context limitation (insufficient context at patch scale)
 
-Add one short free-text note (1-2 lines) explaining the dominant suspected failure or uncertainty driver.
+For this project, review was **limited to these six checklist items**; the optional free-text field in the export template was **not used** (removed from the completed spreadsheets). Optional narrative notes for the thesis can instead be drawn from the bucket-level prevalence tables and representative figures.
 
 ## 7. Reviewer Consistency Rule
 
@@ -99,7 +101,7 @@ After review, create:
    - checklist pattern vs frequency within each bucket and domain direction
 
 3. **Representative-case table**
-   - 2-3 exemplar cases per key pattern with concise interpretation notes
+   - 2-3 exemplar cases per key pattern with concise interpretation in the thesis text or figure captions (not a mandatory per-patch free-text column in the review spreadsheet)
 
 ## 9. Minimal Statistical Reporting
 
@@ -169,11 +171,11 @@ Include:
 
 ## 13. Time Budget (Realistic)
 
-With 80 cases and checklist-only annotation:
+With **up to 50** reviewed cases per comparison direction (40 from four core buckets, plus 10 if the confident-error bucket is included) and **checklist-only** annotation (six items; no per-case free-text field in completed files):
 
 - case preparation/export: 10-25 min
-- human review: 60-90 min
-- summary tables and notes: 30-45 min
+- human review: 45-75 min
+- summary tables and notes: 25-40 min
 
-Total typical effort: ~2 to 3 hours.
+Total typical effort: roughly **1.5 to 2.5 hours** per direction (varies with reviewer speed).
 
