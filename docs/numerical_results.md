@@ -1,6 +1,6 @@
 # Numerical results hub
 
-Single place to look up **numbers that already exist on this machine** (mostly under `reports/`) plus **simple derived quantities** (differences, rates). Virchow **held-out test** scalars in §10 are ingested from `experiments/virchow_colab/evals_cross_domain/*/test_metrics_detailed.json`.
+Single place to look up **numbers that already exist on this machine** (mostly under `reports/` and `experiments/`) plus **simple derived quantities** (differences, rates). Virchow **held-out test** scalars in §10 are ingested from `experiments/virchow_colab/evals_cross_domain/*/test_metrics_detailed.json`. UNI2-h **training validation** scalars in §11 are from `experiments/uni2h_colab/uni2h_macenko_bench_run_01/` (test eval pending).
 
 **Canonical narrative tables** also live in `docs/thesis_results_section.md`; §10.2 here is kept aligned to those JSON exports (re-run ingestion if you replace the files).
 
@@ -16,7 +16,9 @@ Single place to look up **numbers that already exist on this machine** (mostly u
 | PCam raw-split anomaly scan (large JSON) | `reports/pcam_data_quality_report.json` |
 | Virchow **held-out test** metrics (Table 8–9) | `test_metrics_detailed.json` + `test_metrics.json` from eval (see §10.2); often under `…/evals_cross_domain/<name>/` if you used `colab_eval_virchow_all_pending_tests.ipynb` |
 | Virchow **bootstrap / permutation** (§10.3–10.5) | `reports/inference/virchow_test_inference.json`, `virchow_test_inference.csv` — from `scripts/virchow_test_bootstrap_inference.py` on `test_predictions.npz` |
-| Virchow **training** end-of-run (mostly **val**) | Training run folder: `metrics_final.json`, `metrics_final_detailed.json`, `temperature_fit.json` (not a substitute for test JSON unless you also ran test eval into that folder) |
+| Virchow **training** end-of-run (mostly **val**) | `experiments/virchow_colab/virchow_macenko_bench_run_01/` (PCam), `…/virchow_wilds_preprocessed_run_01/` (CAM17); `metrics_final.json`, `metrics_final_detailed.json`, `metrics_history.json`, `temperature_fit.json` |
+| UNI2-h **training** end-of-run (mostly **val**) | `experiments/uni2h_colab/uni2h_macenko_bench_run_01/` (PCam train complete); WILDS train pending. Same artifact names as Virchow training runs. |
+| UNI2-h **held-out test** (C1–C4) | Pending — mirror Virchow layout under `experiments/uni2h_colab/evals_cross_domain/` after Colab eval. |
 | CNN baseline full pipeline (§9) | `experiments/cnn_baseline_20260512_160329/evaluation/metrics_all.json`, `metrics_summary.csv`; per-arm `metrics_per_epoch.json`, `temperature_fit.json` |
 | Qualitative sampling (pool sizes) | `reports/qualitative_error_analysis/virchow_c1_c4/*/bucket_sampling_summary.json` |
 | Qualitative **human review** (checklist) | `reports/qualitative_error_analysis/virchow_c1_c4/*/review_labels_template.csv` (50 cases × 4 conditions; six items, no free-text) |
@@ -381,9 +383,122 @@ Virchow bootstrap CIs (§10.3) are **not** recomputed for CNN here; add `scripts
 
 ---
 
-## 11. Qualitative error analysis
+## 11. UNI2-h (MahmoodLab UNI2-h): PCam training validation
 
-### 11.1 Sampling pool (full test split)
+Frozen **UNI2-h** (ViT-H/14-reg8, 1536-d CLS embedding) + linear head on **post-QC Macenko** PCam (`train_x/y.h5`, `valid_x/y.h5`). Same preprocessed corpus and protocol as Virchow PCam (§10): Adam **lr=0.001**, **10 epochs**, batch **256**, `num_workers=0`, checkpoint by **best validation accuracy**.
+
+**Run (local):** `experiments/uni2h_colab/uni2h_macenko_bench_run_01/`  
+**Colab Drive origin:** `GP_ECG_RUNS/uni2h_macenko_bench_run_01`  
+**Script:** `scripts/train_uni2h_preprocessed_colab.py`
+
+### 11.1 Run configuration (from `run_config.json`)
+
+| Field | Value |
+| --- | --- |
+| Backbone | `hf-hub:MahmoodLab/UNI2-h` |
+| Embed dim | 1536 |
+| Epochs | 10 |
+| Batch size | 256 |
+| Learning rate | 0.001 |
+| Head dropout (train) | 0.2 |
+| MC samples at export | 30 (legacy default; **not** used in thesis protocol — deterministic metrics below) |
+| Val split size \(n\) | 26,515 |
+
+**Note:** Later Colab notebooks pass `--head-dropout 0 --mc-samples 0` for WILDS and future reruns. This PCam run used script defaults for dropout/MC at export only; the linear head trains deterministically (dropout off at eval).
+
+### 11.2 Model selection and temperature
+
+| Quantity | Value |
+| --- | ---: |
+| **Best epoch (val accuracy)** | **1** |
+| Best val accuracy | 0.9398 |
+| Val ROC-AUC at best epoch | 0.9798 |
+| Temperature \(T\) (val fit) | 1.1461 |
+| NLL raw → after \(T\) (val mean) | 0.1714 → 0.1698 |
+
+**Virchow PCam reference (same val split):** best epoch **2**, best val accuracy **0.9323**, val ROC-AUC at best epoch **0.9784**, \(T = 1.2783\) (`experiments/virchow_colab/virchow_macenko_bench_run_01/`).
+
+### 11.3 Validation metrics @ threshold 0.5 (`metrics_final_detailed.json`, best checkpoint)
+
+**Raw sigmoid** (`metrics_val_prob_raw_sigmoid`):
+
+| Model | ROC-AUC | PR-AUC | Acc | Bal acc | Prec | Recall | F1 | Brier | Log loss | ECE\(_{15}\) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| UNI2-h | 0.9798 | 0.9781 | 0.9398 | 0.9346 | 0.9707 | 0.8906 | 0.9289 | 0.0466 | 0.1714 | 0.0223 |
+| Virchow (ep. 2) | 0.9784 | 0.9755 | 0.9323 | 0.9272 | 0.9604 | 0.8833 | 0.9202 | 0.0520 | 0.1886 | 0.0256 |
+| **Δ (UNI2-h − Virchow)** | **+0.0014** | **+0.0026** | **+0.0075** | **+0.0074** | **+0.0103** | **+0.0073** | **+0.0087** | **−0.0054** | **−0.0172** | **−0.0033** |
+
+**After temperature scaling** on val:
+
+| Model | ROC-AUC | Brier | Log loss | ECE\(_{15}\) |
+| --- | ---: | ---: | ---: | ---: |
+| UNI2-h | 0.9798 | 0.0465 | 0.1698 | 0.0179 |
+| Virchow | 0.9784 | 0.0516 | 0.1826 | 0.0256 |
+
+Threshold-based confusion counts are **unchanged** by temperature scaling at 0.5 for these runs.
+
+#### Confusion @ 0.5 (raw / calibrated counts identical)
+
+| Model | TP | TN | FP | FN |
+| --- | ---: | ---: | ---: | ---: |
+| UNI2-h | 10,433 | 14,485 | 315 | 1,282 |
+| Virchow | 10,348 | 14,373 | 427 | 1,367 |
+
+UNI2-h: **85 fewer FN**, **112 fewer FP** vs Virchow on the same validation split (both conservative at 0.5: recall ~0.89, precision ~0.97).
+
+### 11.4 Per-epoch validation trajectory (`metrics_history.json`)
+
+| Epoch | Train acc | Val acc | Val ROC-AUC | Best val acc so far? |
+| ---: | ---: | ---: | ---: | :---: |
+| 1 | 0.9566 | **0.9398** | **0.9798** | **yes** |
+| 2 | 0.9657 | 0.9368 | 0.9794 | |
+| 3 | 0.9673 | 0.9383 | 0.9784 | |
+| 4 | 0.9683 | 0.9374 | 0.9787 | |
+| 5 | 0.9687 | 0.9369 | 0.9774 | |
+| 6 | 0.9694 | 0.9347 | 0.9787 | |
+| 7 | 0.9697 | 0.9342 | 0.9784 | |
+| 8 | 0.9703 | 0.9331 | 0.9776 | |
+| 9 | 0.9704 | 0.9356 | 0.9781 | |
+| 10 | 0.9706 | 0.9358 | 0.9782 | |
+
+**Virchow PCam (same table shape):** best val acc epoch **2** (0.9323); val ROC-AUC peaked epoch **1** (0.9785) then flat (~0.976–0.978); epoch **10** val acc **0.9232** (train–val gap similar).
+
+**Pattern (both backbones):** frozen encoder + linear head converges in **1–2 epochs**; later epochs raise train accuracy while **val accuracy drifts down**; **val ROC-AUC stays stable** (~0.978–0.980).
+
+### 11.5 MC dropout export (informational only)
+
+30 MC forward passes were run at export (`mc_dropout` block in JSON). Val ROC-AUC on MC-mean prob: **0.9797** vs **0.9798** deterministic — negligible change. Mean epistemic std across patches: **0.022**. **Do not use** for thesis tables (deterministic protocol).
+
+### 11.6 Comparison to Virchow **test** C1 (pending for UNI2-h)
+
+Virchow **held-out PCam test** (C1, §10.2): ROC-AUC **0.9813**, accuracy **0.9367**, recall **0.8919**, \(n_{\mathrm{test}} = 27{,}704\).
+
+UNI2-h **validation** (§11.3): ROC-AUC **0.9798**, accuracy **0.9398**, recall **0.8906**, \(n_{\mathrm{val}} = 26{,}515\).
+
+**Interpretation:** In-domain discrimination is **similar** on val; UNI2-h val accuracy is **slightly higher** than Virchow val at best epoch. **Headline claim requires** UNI2-h test eval on the reserved PCam test split (mirror `colab_eval_uni2h_pcam_test_beginner.ipynb` → `experiments/uni2h_colab/evals_cross_domain/pcam_trained_on_pcam_test/`).
+
+### 11.7 Pending
+
+| Item | Status |
+| --- | --- |
+| PCam reserved **test** eval (C1) | Not yet ingested |
+| Cross-domain test eval (C2–C4) | Not yet run |
+| WILDS CAMELYON17 **training** | Not yet ingested |
+| Bootstrap / permutation on UNI2-h test NPZ | Not yet run |
+
+### 11.8 Synthesis (validation-only)
+
+1. **UNI2-h linear probe succeeds on Macenko PCam** — val ROC-AUC **~0.98**, comparable to Virchow on the same validation split.
+2. **Early stopping would suffice** — epoch 1 best for UNI2-h (epoch 2 for Virchow); epochs 3–10 add little ranking signal and slightly hurt threshold metrics.
+3. **Error mode** — high precision, moderate recall (~89%): more false negatives than false positives at 0.5 (FN **1,282** vs FP **315**).
+4. **Calibration** — ECE\(_{15}\) **0.022** raw, **0.018** after \(T\); mild temperature correction (\(T \approx 1.15\)).
+5. **External transfer (PCam→CAM17)** — unknown until C2 test eval; WILDS training run needed for C3/C4 mirror.
+
+---
+
+## 12. Qualitative error analysis
+
+### 12.1 Sampling pool (full test split)
 
 \(n_{\mathrm{test}}\) and \(\tau_H\) from each `bucket_sampling_summary.json`; `available_n` = patches in bucket on full test; `sampled_n` = 10 (protocol).
 
@@ -394,7 +509,7 @@ Virchow bootstrap CIs (§10.3) are **not** recomputed for CNN here; add `scripts
 | C3 | 83,181 | 0.3577 | 872 | 806 | 1,278 | 7,041 | 362 |
 | C4 | 27,704 | 0.5928 | 102 | 4,783 | 1,257 | 1,514 | 2,125 |
 
-### 11.2 Human checklist review (completed)
+### 12.2 Human checklist review (completed)
 
 **Source:** `reports/qualitative_error_analysis/virchow_c1_c4/<condition>/review_labels_template.csv` (exported from filled spreadsheets; same columns as protocol §6). **\(n = 50\)** reviewed cases per condition (**10** per bucket: FP, FN, high-entropy error, high-entropy correct, confident error). Counts are **Present** / \(k\) of \(n=10\) in bucket; no “Unclear” marks in completed files.
 
@@ -440,7 +555,7 @@ Checklist items: (1) tissue scarcity, (2) artifact burden, (3) borderline morpho
 | HE correct | 1/10 | 2/10 | 6/10 | 3/10 | 2/10 | 3/10 |
 | Conf. error | 1/10 | 4/10 | 4/10 | 3/10 | 4/10 | 2/10 |
 
-### 11.3 Cross-condition patterns (FN and high-entropy error buckets)
+### 12.3 Cross-condition patterns (FN and high-entropy error buckets)
 
 | Pattern (Present in FN bucket) | C1 | C2 | C3 | C4 |
 | --- | ---: | ---: | ---: | ---: |
@@ -449,13 +564,13 @@ Checklist items: (1) tissue scarcity, (2) artifact burden, (3) borderline morpho
 | Color/stain atypia | 2/10 | **6/10** | 2/10 | 4/10 |
 | Borderline morphology (HE **error** bucket) | 7/10 | **8/10** | 7/10 | **8/10** |
 
-### 11.4 Interpretation (linked to §10 metrics)
+### 12.4 Interpretation (linked to §10 metrics)
 
 1. **C1 false negatives** — Patch-context limitation was marked Present in **8/10** FN reviews (vs 2/10 in FP), consistent with missed positives where the central \(32\times32\) tumour focus may be hard to judge at patch scale despite strong overall ROC-AUC (§10.2).
 
 2. **External CAMELYON17 (C2)** — **Color/stain atypia** was common in FN and FP (**6/10** each), aligning with cross-domain appearance shift while numeric transfer on CAM17 test remains excellent (ROC-AUC 0.997).
 
-3. **C4 external PCam** — The test split has **4,783** FN patches available (§11.1); sampled FN cases show **6/10** small-focus lesion and **6/10** context limitation, matching the large accuracy drop (§10.6) and high ECE (§10.2) when CAMELYON17-trained weights are applied to PCam.
+3. **C4 external PCam** — The test split has **4,783** FN patches available (§12.1); sampled FN cases show **6/10** small-focus lesion and **6/10** context limitation, matching the large accuracy drop (§10.6) and high ECE (§10.2) when CAMELYON17-trained weights are applied to PCam.
 
 4. **High-entropy errors** — **Borderline morphology** was Present in **7–8/10** HE-error cases in every condition, supporting that ambiguous morphology drives uncertain wrong predictions rather than artifacts alone.
 
@@ -463,15 +578,15 @@ Checklist items: (1) tissue scarcity, (2) artifact burden, (3) borderline morpho
 
 ---
 
-## 12. Items intentionally **not** duplicated here
+## 13. Items intentionally **not** duplicated here
 
-- Full **Virchow** train/val **loss curves** (per-epoch): in run `metrics_history` / TensorBoard exports — too large for this hub; point figures to supplement.
+- Full **Virchow / UNI2-h** train/val **loss curves** (per-epoch): in run `metrics_history.json` — §11.4 summarizes UNI2-h/ Virchow PCam val trajectories; full curves to supplement.
 - **Reliability diagrams** (figures from `ece_15_bins_*` in `test_metrics_detailed.json`).
 - **Per-patch** raw PCam anomaly index lists: `pcam_data_quality_report.json` only.
 
 ---
 
-## 13. Changelog
+## 14. Changelog
 
 | Date | Note |
 | --- | --- |
@@ -479,6 +594,7 @@ Checklist items: (1) tissue scarcity, (2) artifact burden, (3) borderline morpho
 | 2026-05-12 | §10.2–10.3: filled Virchow C1–C4 from `experiments/virchow_colab/evals_cross_domain/*/test_metrics_detailed.json` (calibrated + raw + confusion; deltas). |
 | 2026-05-15 | §10.3–10.5: bootstrap CIs, paired transfer \(\Delta\) CIs, permutation + BH from `reports/inference/virchow_test_inference.json`. |
 | 2026-05-15 | §9: CNN baseline from `cnn_baseline_20260512_160329`; §10.8 CNN vs Virchow comparison. |
-| 2026-05-15 | §11.2–11.4: qualitative checklist prevalences from completed `review_labels_template.csv` (C1–C4). |
+| 2026-05-15 | §11.2–11.4 (old §11): qualitative checklist prevalences from completed `review_labels_template.csv` (C1–C4). |
+| 2026-06-18 | §11: UNI2-h PCam training validation from `experiments/uni2h_colab/uni2h_macenko_bench_run_01/`; val vs Virchow PCam training val; per-epoch table; test/C2–C4 pending. Renumbered qualitative → §12. |
 
 When you add new JSON from Colab, append a short subsection with the file path and paste the headline scalars so this document stays the one-stop table of contents.
